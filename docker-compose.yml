@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  ipzxqco:
+    image: skidoodle/ipinfo:main
+    build: .
+    restart: unless-stopped
+    volumes:
+      - data:/app/data
+    ports:
+      - 3000:3000
+
+volumes:
+  data:
