@@ -188,7 +188,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if IPAddress == "" || IPAddress == "self" {
-		if realIP, ok := r.Header["X-Real-Ip"]; ok && len(realIP) > 0 {
+		if realIP, ok := r.Header["X-Forwarded-For"]; ok && len(realIP) > 0 {
 			IPAddress = realIP[0]
 		} else {
 			IPAddress = extractIP(r.RemoteAddr)
