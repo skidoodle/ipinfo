@@ -187,14 +187,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		IPAddress = requestedThings[1]
 	}
 
-	if IPAddress == "" || IPAddress == "self" {
-		if realIP, ok := r.Header["X-Forwarded-For"]; ok && len(realIP) > 0 {
-			IPAddress = realIP[0]
-		} else {
-			IPAddress = extractIP(r.RemoteAddr)
-		}
-	}
-
+    if IPAddress == "" || IPAddress == "self" {
+        if realIP := r.Header.Get("CF-Connecting-IP"); realIP != "" {
+            IPAddress = realIP
+        } else if realIP := r.Header.Get("X-Forwarded-For"); realIP != "" {
+            IPAddress = strings.Split(realIP, ",")[0]
+        } else {
+            IPAddress = extractIP(r.RemoteAddr)
+        }
+    }
 	ip := net.ParseIP(IPAddress)
 	if ip == nil {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
