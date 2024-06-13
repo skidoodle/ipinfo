@@ -84,12 +84,6 @@ services:
     restart: unless-stopped
     ports:
       - '3000:3000'
-    volumes:
-      - data:/app
-
-volumes:
-  data:
-    driver: local
 ```
 ### Docker Run
 ```sh
