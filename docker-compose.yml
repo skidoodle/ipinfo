@@ -1,14 +1,14 @@
-version: '3'
+version: '3.8'
 
 services:
-  ipzxqco:
-    image: skidoodle/ipinfo:main
-    build: .
+  ipinfo:
+    image: ghcr.io/skidoodle/ipinfo:main
+    container_name: ipinfo
     restart: unless-stopped
-    volumes:
-      - data:/app/data
     ports:
-      - 3000:3000
+      - "3000:3000"
+    volumes:
+      - data:/app
 
 volumes:
   data:
