@@ -161,29 +161,11 @@ type dataStruct struct {
 	Loc           string `json:"loc"`
 }
 
-var nameToField = map[string]func(dataStruct) string{
-	"ip":             func(d dataStruct) string { return d.IP },
-	"hostname":       func(d dataStruct) string { return d.Hostname },
-	"asn":            func(d dataStruct) string { return d.ASN },
-	"organization":   func(d dataStruct) string { return d.Organization },
-	"city":           func(d dataStruct) string { return d.City },
-	"region":         func(d dataStruct) string { return d.Region },
-	"country":        func(d dataStruct) string { return d.Country },
-	"country_full":   func(d dataStruct) string { return d.CountryFull },
-	"continent":      func(d dataStruct) string { return d.Continent },
-	"continent_full": func(d dataStruct) string { return d.ContinentFull },
-	"loc":            func(d dataStruct) string { return d.Loc },
-}
-
 func handler(w http.ResponseWriter, r *http.Request) {
 	requestedThings := strings.Split(r.URL.Path, "/")
 
-	var IPAddress, Which string
-	switch len(requestedThings) {
-	case 3:
-		Which = requestedThings[2]
-		fallthrough
-	case 2:
+	var IPAddress string
+	if len(requestedThings) > 1 {
 		IPAddress = requestedThings[1]
 	}
 
@@ -265,29 +247,20 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		Loc:           fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude),
 	}
 
-	if Which == "" {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		callback := r.URL.Query().Get("callback")
-		enableJSONP := callback != "" && len(callback) < 2000 && callbackJSONP.MatchString(callback)
-		if enableJSONP {
-			w.Write([]byte(fmt.Sprintf("/**/ typeof %s === 'function' && %s(", callback, callback)))
-		}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	callback := r.URL.Query().Get("callback")
+	enableJSONP := callback != "" && len(callback) < 2000 && callbackJSONP.MatchString(callback)
+	if enableJSONP {
+		jsonData, _ := json.MarshalIndent(d, "", "  ")
+		response := fmt.Sprintf("/**/ typeof %s === 'function' && %s(%s);", callback, callback, jsonData)
+		w.Write([]byte(response))
+	} else {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		if r.URL.Query().Get("compact") == "true" {
 			enc.SetIndent("", "")
 		}
 		enc.Encode(d)
-		if enableJSONP {
-			w.Write([]byte(");"))
-		}
-	} else {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		if val := nameToField[Which]; val != nil {
-			w.Write([]byte(val(d)))
-		} else {
-			w.Write([]byte("undefined"))
-		}
 	}
 }
 
