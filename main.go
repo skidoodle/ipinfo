@@ -187,15 +187,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		IPAddress = requestedThings[1]
 	}
 
-    if IPAddress == "" || IPAddress == "self" {
-        if realIP := r.Header.Get("CF-Connecting-IP"); realIP != "" {
-            IPAddress = realIP
-        } else if realIP := r.Header.Get("X-Forwarded-For"); realIP != "" {
-            IPAddress = strings.Split(realIP, ",")[0]
-        } else {
-            IPAddress = extractIP(r.RemoteAddr)
-        }
-    }
+	if IPAddress == "" || IPAddress == "self" {
+		if realIP := r.Header.Get("CF-Connecting-IP"); realIP != "" {
+			IPAddress = realIP
+		} else if realIP := r.Header.Get("X-Forwarded-For"); realIP != "" {
+			IPAddress = strings.Split(realIP, ",")[0]
+		} else {
+			IPAddress = extractIP(r.RemoteAddr)
+		}
+	}
 	ip := net.ParseIP(IPAddress)
 	if ip == nil {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -253,7 +253,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	d := dataStruct{
 		IP:            ip.String(),
-		Hostname:      hostname[0],
+		Hostname:      strings.TrimSuffix(hostname[0], "."),
 		ASN:           fmt.Sprintf("%d", asnRecord.AutonomousSystemNumber),
 		Organization:  asnRecord.AutonomousSystemOrganization,
 		Country:       cityRecord.Country.IsoCode,
