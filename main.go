@@ -17,12 +17,11 @@ import (
 	"github.com/oschwald/maxminddb-golang"
 )
 
-// GeoIP database readers
-var (
-	cityDB *maxminddb.Reader
-	asnDB  *maxminddb.Reader
-	dbMtx  sync.RWMutex
+var cityDB *maxminddb.Reader
+var asnDB *maxminddb.Reader
+var dbMtx = new(sync.RWMutex)
 
+var (
 	currCityFilename = time.Now().Format("2006-01") + "-city.mmdb"
 	currASNFilename  = time.Now().Format("2006-01") + "-asn.mmdb"
 )
@@ -33,66 +32,60 @@ const (
 )
 
 func main() {
-	initDBs()
-	go runUpdater()
-	runServer()
+	initDatabases()
+	go startUpdater()
+	startServer()
 }
 
-// Initialize the databases
-func initDBs() {
+func initDatabases() {
 	var err error
-	cityDB, err = openDB(currCityFilename)
+
+	cityDB, err = maxminddb.Open(currCityFilename)
 	if err != nil {
-		log.Printf("Error opening city database: %v", err)
-		updateDB(cityDBURL, &cityDB, &currCityFilename)
+		if os.IsNotExist(err) {
+			currCityFilename = ""
+			doUpdate()
+			if cityDB == nil {
+				log.Fatalf("Failed to initialize city database: %v", err)
+			}
+		} else {
+			log.Fatalf("Error opening city database: %v", err)
+		}
 	}
-	asnDB, err = openDB(currASNFilename)
+
+	asnDB, err = maxminddb.Open(currASNFilename)
 	if err != nil {
-		log.Printf("Error opening ASN database: %v", err)
-		updateDB(asnDBURL, &asnDB, &currASNFilename)
+		if os.IsNotExist(err) {
+			currASNFilename = ""
+			doUpdate()
+			if asnDB == nil {
+				log.Fatalf("Failed to initialize ASN database: %v", err)
+			}
+		} else {
+			log.Fatalf("Error opening ASN database: %v", err)
+		}
 	}
 }
 
-// Open a MaxMind DB file
-func openDB(filename string) (*maxminddb.Reader, error) {
-	db, err := maxminddb.Open(filename)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	return db, nil
-}
-
-// Download and set the database
-func updateDB(urlTemplate string, db **maxminddb.Reader, currFilename *string) {
-	*currFilename = ""
-	doUpdate()
-	if *db == nil {
-		log.Fatalf("Failed to initialize database from %s", urlTemplate)
-	}
-}
-
-// Periodically update the databases
-func runUpdater() {
-	for range time.Tick(24 * time.Hour * 7) {
+func startUpdater() {
+	for range time.Tick(time.Hour * 24 * 7) {
 		doUpdate()
 	}
 }
 
-// Start the HTTP server
-func runServer() {
+func startServer() {
 	log.Println("Server listening on :3000")
 	http.HandleFunc("/", handler)
 	log.Fatal(http.ListenAndServe(":3000", nil))
 }
 
-// Fetch and update the GeoIP databases
 func doUpdate() {
 	log.Println("Fetching updates...")
 	currMonth := time.Now().Format("2006-01")
 	newCityFilename := currMonth + "-city.mmdb"
 	newASNFilename := currMonth + "-asn.mmdb"
 
-	updateDatabase(cityDBURL, newCityFilename, func(newDB *maxminddb.Reader) {
+	updateDatabase(fmt.Sprintf(cityDBURL, currMonth), newCityFilename, func(newDB *maxminddb.Reader) {
 		dbMtx.Lock()
 		defer dbMtx.Unlock()
 		if cityDB != nil {
@@ -103,7 +96,7 @@ func doUpdate() {
 		log.Printf("City GeoIP database updated to %s\n", currMonth)
 	})
 
-	updateDatabase(asnDBURL, newASNFilename, func(newDB *maxminddb.Reader) {
+	updateDatabase(fmt.Sprintf(asnDBURL, currMonth), newASNFilename, func(newDB *maxminddb.Reader) {
 		dbMtx.Lock()
 		defer dbMtx.Unlock()
 		if asnDB != nil {
@@ -115,22 +108,21 @@ func doUpdate() {
 	})
 }
 
-// Update the specified database
-func updateDatabase(urlTemplate, dstFilename string, updateFunc func(*maxminddb.Reader)) {
-	resp, err := http.Get(fmt.Sprintf(urlTemplate, time.Now().Format("2006-01")))
+func updateDatabase(url, dstFilename string, updateFunc func(*maxminddb.Reader)) {
+	resp, err := http.Get(url)
 	if err != nil {
-		log.Printf("Error fetching the updated DB: %v\n", err)
+		log.Printf("Error fetching the updated DB from %s: %v\n", url, err)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Non-200 status code (%d), retry later...\n", resp.StatusCode)
+		log.Printf("Non-200 status code (%d) from %s, retry later...\n", resp.StatusCode, url)
 		return
 	}
 
 	dst, err := os.Create(dstFilename)
 	if err != nil {
-		log.Printf("Error creating file: %v\n", err)
+		log.Printf("Error creating file %s: %v\n", dstFilename, err)
 		return
 	}
 	defer dst.Close()
