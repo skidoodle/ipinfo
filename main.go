@@ -156,13 +156,11 @@ type dataStruct struct {
 	IP            *string `json:"ip"`
 	Hostname      *string `json:"hostname"`
 	ASN           *string `json:"asn"`
-	Organization  *string `json:"organization"`
+	Org           *string `json:"org"`
 	City          *string `json:"city"`
 	Region        *string `json:"region"`
 	Country       *string `json:"country"`
-	CountryFull   *string `json:"country_full"`
 	Continent     *string `json:"continent"`
-	ContinentFull *string `json:"continent_full"`
 	Loc           *string `json:"loc"`
 }
 
@@ -324,20 +322,16 @@ func getField(data *dataStruct, field string) *string {
 		return data.Hostname
 	case "asn":
 		return data.ASN
-	case "organization":
-		return data.Organization
+	case "org":
+		return data.Org
 	case "city":
 		return data.City
 	case "region":
 		return data.Region
 	case "country":
 		return data.Country
-	case "country_full":
-		return data.CountryFull
 	case "continent":
 		return data.Continent
-	case "continent_full":
-		return data.ContinentFull
 	case "loc":
 		return data.Loc
 	default:
@@ -362,16 +356,16 @@ func lookupIPData(ip net.IP) *dataStruct {
 	defer dbMtx.RUnlock()
 
 	var cityRecord struct {
-		Country struct {
-			IsoCode string            `maxminddb:"iso_code"`
-			Names   map[string]string `maxminddb:"names"`
-		} `maxminddb:"country"`
 		City struct {
 			Names map[string]string `maxminddb:"names"`
 		} `maxminddb:"city"`
 		Subdivisions []struct {
 			Names map[string]string `maxminddb:"names"`
 		} `maxminddb:"subdivisions"`
+		Country struct {
+			IsoCode string            `maxminddb:"iso_code"`
+			Names   map[string]string `maxminddb:"names"`
+		} `maxminddb:"country"`
 		Continent struct {
 			Code  string            `maxminddb:"code"`
 			Names map[string]string `maxminddb:"names"`
@@ -412,13 +406,11 @@ func lookupIPData(ip net.IP) *dataStruct {
 		IP:            toPtr(ip.String()),
 		Hostname:      toPtr(strings.TrimSuffix(hostname[0], ".")),
 		ASN:           toPtr(fmt.Sprintf("%d", asnRecord.AutonomousSystemNumber)),
-		Organization:  toPtr(asnRecord.AutonomousSystemOrganization),
-		Country:       toPtr(cityRecord.Country.IsoCode),
-		CountryFull:   toPtr(cityRecord.Country.Names["en"]),
+		Org:           toPtr(asnRecord.AutonomousSystemOrganization),
 		City:          toPtr(cityRecord.City.Names["en"]),
 		Region:        sd,
-		Continent:     toPtr(cityRecord.Continent.Code),
-		ContinentFull: toPtr(cityRecord.Continent.Names["en"]),
+		Country:       toPtr(cityRecord.Country.Names["en"]),
+		Continent:     toPtr(cityRecord.Continent.Names["en"]),
 		Loc:           toPtr(fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude)),
 	}
 }
