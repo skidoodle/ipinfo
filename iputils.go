@@ -114,6 +114,7 @@ func lookupIPData(ip net.IP) *dataStruct {
 		Location struct {
 			Latitude  float64 `maxminddb:"latitude"`
 			Longitude float64 `maxminddb:"longitude"`
+			Timezone  string `maxminddb:"time_zone"`
 		} `maxminddb:"location"`
 	}
 	err := cityDB.Lookup(ip, &cityRecord)
@@ -152,6 +153,7 @@ func lookupIPData(ip net.IP) *dataStruct {
 		Region:    sd,
 		Country:   toPtr(cityRecord.Country.Names["en"]),
 		Continent: toPtr(cityRecord.Continent.Names["en"]),
+		Timezone:  toPtr(cityRecord.Location.Timezone),
 		Loc:       toPtr(fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude)),
 	}
 }

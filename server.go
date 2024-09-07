@@ -21,6 +21,7 @@ type dataStruct struct {
 	Region    *string `json:"region"`
 	Country   *string `json:"country"`
 	Continent *string `json:"continent"`
+	Timezone  *string `json:"timezone"`
 	Loc       *string `json:"loc"`
 }
 
@@ -124,6 +125,8 @@ func getField(data *dataStruct, field string) *string {
 		return data.Country
 	case "continent":
 		return data.Continent
+	case "timezone":
+		return data.Timezone
 	case "loc":
 		return data.Loc
 	default:
