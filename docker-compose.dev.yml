@@ -1,6 +1,6 @@
 services:
   ipinfo:
-    image: ghcr.io/skidoodle/ipinfo:main
+    build: .
     container_name: ipinfo
     restart: unless-stopped
     ports:
