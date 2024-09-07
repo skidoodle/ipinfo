@@ -4,11 +4,27 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -o ipinfo .
+RUN go install github.com/maxmind/geoipupdate/v7/cmd/geoipupdate@latest
 RUN mkdir -p /build/data
 
 FROM alpine:latest
+RUN apk add --no-cache curl
 WORKDIR /app
 COPY --from=builder /build/ipinfo .
-COPY --from=builder /build/data /app/data
+COPY --from=builder /go/bin/geoipupdate /usr/local/bin/geoipupdate
+
+ENV GEOIPUPDATE_ACCOUNT_ID=${GEOIPUPDATE_ACCOUNT_ID}
+ENV GEOIPUPDATE_LICENSE_KEY=${GEOIPUPDATE_LICENSE_KEY}
+ENV GEOIPUPDATE_EDITION_IDS="GeoLite2-City GeoLite2-ASN"
+ENV GEOIPUPDATE_DB_DIR=/app
+
+RUN echo "AccountID ${GEOIPUPDATE_ACCOUNT_ID}" > /etc/GeoIP.conf && \
+    echo "LicenseKey ${GEOIPUPDATE_LICENSE_KEY}" >> /etc/GeoIP.conf && \
+    echo "EditionIDs ${GEOIPUPDATE_EDITION_IDS}" >> /etc/GeoIP.conf && \
+    echo "DatabaseDirectory ${GEOIPUPDATE_DB_DIR}" >> /etc/GeoIP.conf
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD curl --fail http://localhost:3000/ || exit 1
+
 EXPOSE 3000
-CMD ["./ipinfo"]
+
+CMD ["sh", "-c", "geoipupdate && ./ipinfo"]
