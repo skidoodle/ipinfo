@@ -27,7 +27,7 @@ RUN echo "AccountID ${GEOIPUPDATE_ACCOUNT_ID}" > /etc/GeoIP.conf && \
 RUN echo "0 0 * * * geoipupdate >> /var/log/geoipupdate.log 2>&1" > /etc/crontabs/root
 RUN cat /etc/crontabs/root
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD curl --fail http://localhost:3000/ || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD curl --fail http://localhost:3000/health || exit 1
 
 EXPOSE 3000
 
