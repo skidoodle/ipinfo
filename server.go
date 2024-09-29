@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,7 +12,6 @@ import (
 
 var invalidIPBytes = []byte("Please provide a valid IP address.")
 
-// Struct to hold IP data
 type dataStruct struct {
 	IP        *string `json:"ip"`
 	Hostname  *string `json:"hostname"`
@@ -36,9 +36,27 @@ func startServer() {
 	log.Fatal(http.ListenAndServe(":3000", nil))
 }
 
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	Writer *gzip.Writer
+}
+
+func (w gzipResponseWriter) Write(b []byte) (int, error) {
+	return w.Writer.Write(b)
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	requestedThings := strings.Split(r.URL.Path, "/")
 
+	// Enable gzip compression if requested
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		w = &gzipResponseWriter{Writer: gz, ResponseWriter: w}
+	}
+
+	// Extract IP and field
 	var IPAddress, field string
 	if len(requestedThings) > 1 && net.ParseIP(requestedThings[1]) != nil {
 		IPAddress = requestedThings[1]
@@ -46,19 +64,23 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			field = requestedThings[2]
 		}
 	} else if len(requestedThings) > 1 {
-		field = requestedThings[1]
+		IPAddress = requestedThings[1] // This might be an invalid IP
 	}
 
-	if IPAddress == "" || IPAddress == "self" {
+	// Check if the IP is the client's IP
+	if IPAddress == "" {
 		IPAddress = getRealIP(r)
 	}
+
+	// Validate the IP address
 	ip := net.ParseIP(IPAddress)
 	if ip == nil {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write(invalidIPBytes)
+		// Send 400 Bad Request with invalid IP message
+		http.Error(w, string(invalidIPBytes), http.StatusBadRequest)
 		return
 	}
 
+	// Check if the IP is a bogon IP
 	if isBogon(ip) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		bogonData := bogonDataStruct{
@@ -69,13 +91,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up IP data
 	data := lookupIPData(ip)
 	if data == nil {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write(invalidIPBytes)
+		// Send 400 Bad Request with invalid IP message
+		http.Error(w, string(invalidIPBytes), http.StatusBadRequest)
 		return
 	}
 
+	// Handle specific field requests
 	if field != "" {
 		value := getField(data, field)
 		if value != nil {
@@ -83,12 +107,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]*string{field: value})
 			return
 		} else {
+			// Handle invalid field request
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			json.NewEncoder(w).Encode(map[string]*string{field: nil})
 			return
 		}
 	}
 
+	// If no specific field is requested, return the whole data
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	callback := r.URL.Query().Get("callback")
 	enableJSONP := callback != "" && len(callback) < 2000 && callbackJSONP.MatchString(callback)
@@ -106,30 +132,22 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Get specific field from dataStruct
+var fieldMap = map[string]func(*dataStruct) *string{
+	"ip":        func(d *dataStruct) *string { return d.IP },
+	"hostname":  func(d *dataStruct) *string { return d.Hostname },
+	"asn":       func(d *dataStruct) *string { return d.ASN },
+	"org":       func(d *dataStruct) *string { return d.Org },
+	"city":      func(d *dataStruct) *string { return d.City },
+	"region":    func(d *dataStruct) *string { return d.Region },
+	"country":   func(d *dataStruct) *string { return d.Country },
+	"continent": func(d *dataStruct) *string { return d.Continent },
+	"timezone":  func(d *dataStruct) *string { return d.Timezone },
+	"loc":       func(d *dataStruct) *string { return d.Loc },
+}
+
 func getField(data *dataStruct, field string) *string {
-	switch field {
-	case "ip":
-		return data.IP
-	case "hostname":
-		return data.Hostname
-	case "asn":
-		return data.ASN
-	case "org":
-		return data.Org
-	case "city":
-		return data.City
-	case "region":
-		return data.Region
-	case "country":
-		return data.Country
-	case "continent":
-		return data.Continent
-	case "timezone":
-		return data.Timezone
-	case "loc":
-		return data.Loc
-	default:
-		return nil
+	if f, ok := fieldMap[field]; ok {
+		return f(data)
 	}
+	return nil
 }

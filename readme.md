@@ -1,7 +1,9 @@
 # ipinfo
+
 `ipinfo` is a powerful and efficient IP information service written in Go. It fetches GeoIP data to provide detailed information about an IP address, including geographical location, ASN, and related network details. The service automatically updates its GeoIP databases to ensure accuracy and reliability.
 
 ## Features
+
 - **IP Geolocation**: Provides city, region, country, continent, and coordinates for any IP address.
 - **ASN Information**: Includes autonomous system number and organization.
 - **Hostname Lookup**: Retrieves the hostname associated with the IP address.
@@ -9,7 +11,9 @@
 - **JSONP Support**: Allows JSONP responses for cross-domain requests.
 
 ## Example Endpoints
+
 ### Get information about an IP address
+
 ```sh
 $ curl https://ip.albert.lol/9.9.9.9
 {
@@ -25,14 +29,18 @@ $ curl https://ip.albert.lol/9.9.9.9
   "loc": "37.8767,-122.2676"
 }
 ```
+
 ### Get specific information (e.g., city) about an IP address
+
 ```sh
 $ curl https://ip.albert.lol/9.9.9.9/city
 {
   "city": "Berkeley"
 }
 ```
+
 ### Use JSONP callback function
+
 ```sh
 $ curl https://test.albert.lol/9.9.9.9?callback=Quad9
 /**/ typeof Quad9 === 'function' && Quad9({
@@ -48,6 +56,7 @@ $ curl https://test.albert.lol/9.9.9.9?callback=Quad9
   "loc": "37.8767,-122.2676"
 });
 ```
+
 ```html
 <script>
 let Quad9 = function(data) {
@@ -58,7 +67,9 @@ let Quad9 = function(data) {
 ```
 
 ## Running Locally
+
 ### With Docker
+
 ```sh
 git clone https://github.com/skidoodle/ipinfo
 cd ipinfo
@@ -71,7 +82,9 @@ docker run \
 -e GEOIPUPDATE_DB_DIR=<> \
 ipinfo:main
 ```
+
 ### Without Docker
+
 ```sh
 git clone https://github.com/skidoodle/ipinfo
 cd ipinfo
@@ -79,7 +92,9 @@ go run .
 ```
 
 ## Deploying
+
 ### Docker Compose
+
 ```yaml
 services:
   ipinfo:
@@ -100,7 +115,9 @@ services:
       retries: 3
       start_period: 40s
 ```
+
 ### Docker Run
+
 ```sh
 docker run \
   -d \
@@ -115,4 +132,5 @@ docker run \
 ```
 
 ## LICENSE
+
 [GPL-3.0](https://github.com/skidoodle/ipinfo/blob/main/license)
