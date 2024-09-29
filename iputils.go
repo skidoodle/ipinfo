@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
 
 var bogonNets = []*net.IPNet{
@@ -91,8 +93,25 @@ func getRealIP(r *http.Request) string {
 	}
 }
 
-// Lookup IP data in the databases
+var ipCache = sync.Map{}
+
+type cachedIPData struct {
+	data *dataStruct
+	time time.Time
+}
+
+const cacheTTL = time.Minute * 10
+
+// Lookup IP data in the databases with caching
 func lookupIPData(ip net.IP) *dataStruct {
+	if cachedData, ok := ipCache.Load(ip.String()); ok {
+		cached := cachedData.(cachedIPData)
+		if time.Since(cached.time) < cacheTTL {
+			return cached.data
+		}
+		ipCache.Delete(ip.String())
+	}
+
 	dbMtx.RLock()
 	defer dbMtx.RUnlock()
 
@@ -114,7 +133,7 @@ func lookupIPData(ip net.IP) *dataStruct {
 		Location struct {
 			Latitude  float64 `maxminddb:"latitude"`
 			Longitude float64 `maxminddb:"longitude"`
-			Timezone  string `maxminddb:"time_zone"`
+			Timezone  string  `maxminddb:"time_zone"`
 		} `maxminddb:"location"`
 	}
 	err := cityDB.Lookup(ip, &cityRecord)
@@ -144,7 +163,7 @@ func lookupIPData(ip net.IP) *dataStruct {
 		sd = &name
 	}
 
-	return &dataStruct{
+	data := &dataStruct{
 		IP:        toPtr(ip.String()),
 		Hostname:  toPtr(strings.TrimSuffix(hostname[0], ".")),
 		ASN:       toPtr(fmt.Sprintf("%d", asnRecord.AutonomousSystemNumber)),
@@ -156,6 +175,10 @@ func lookupIPData(ip net.IP) *dataStruct {
 		Timezone:  toPtr(cityRecord.Location.Timezone),
 		Loc:       toPtr(fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude)),
 	}
+
+	ipCache.Store(ip.String(), cachedIPData{data: data, time: time.Now()})
+
+	return data
 }
 
 // Convert string to pointer
