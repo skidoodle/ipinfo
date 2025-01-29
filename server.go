@@ -3,7 +3,6 @@ package main
 import (
 	"compress/gzip"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 )
 
 var invalidIPBytes = []byte("Please provide a valid IP address.")
+var invalidFieldBytes = []byte("Please provide a valid field.")
 
 type dataStruct struct {
 	IP        *string `json:"ip"`
@@ -46,7 +46,7 @@ func (w gzipResponseWriter) Write(b []byte) (int, error) {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	requestedThings := strings.Split(r.URL.Path, "/")
+	requestedThings := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 
 	// Enable gzip compression if requested
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
@@ -56,26 +56,46 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		w = &gzipResponseWriter{Writer: gz, ResponseWriter: w}
 	}
 
-	// Extract IP and field
 	var IPAddress, field string
-	if len(requestedThings) > 1 && net.ParseIP(requestedThings[1]) != nil {
-		IPAddress = requestedThings[1]
-		if len(requestedThings) > 2 {
-			field = requestedThings[2]
+
+	// Parse the request URL
+	switch len(requestedThings) {
+	case 0:
+		IPAddress = getRealIP(r) // Default to visitor's IP
+	case 1:
+		if requestedThings[0] == "" {
+			IPAddress = getRealIP(r) // Handle root page case
+		} else if _, ok := fieldMap[requestedThings[0]]; ok {
+			IPAddress = getRealIP(r)
+			field = requestedThings[0]
+		} else if net.ParseIP(requestedThings[0]) != nil {
+			IPAddress = requestedThings[0] // Valid IP provided
+		} else {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": string(invalidIPBytes)})
+			return
 		}
-	} else if len(requestedThings) > 1 {
-		IPAddress = requestedThings[1] // This might be an invalid IP
+	case 2:
+		IPAddress = requestedThings[0]
+		if _, ok := fieldMap[requestedThings[1]]; ok {
+			field = requestedThings[1]
+		} else {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": string(invalidFieldBytes)})
+			return
+		}
+	default:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": string(invalidIPBytes)})
+		return
 	}
 
-	// Check if the IP is the client's IP
-	if IPAddress == "" {
-		IPAddress = getRealIP(r)
-	}
-
-	// Validate the IP address
+	// Validate the resolved IP
 	ip := net.ParseIP(IPAddress)
 	if ip == nil {
-		// Send 400 Bad Request with invalid IP message
 		http.Error(w, string(invalidIPBytes), http.StatusBadRequest)
 		return
 	}
@@ -83,18 +103,13 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	// Check if the IP is a bogon IP
 	if isBogon(ip) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		bogonData := bogonDataStruct{
-			IP:    ip.String(),
-			Bogon: true,
-		}
-		json.NewEncoder(w).Encode(bogonData)
+		json.NewEncoder(w).Encode(bogonDataStruct{IP: ip.String(), Bogon: true})
 		return
 	}
 
 	// Look up IP data
 	data := lookupIPData(ip)
 	if data == nil {
-		// Send 400 Bad Request with invalid IP message
 		http.Error(w, string(invalidIPBytes), http.StatusBadRequest)
 		return
 	}
@@ -102,34 +117,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	// Handle specific field requests
 	if field != "" {
 		value := getField(data, field)
-		if value != nil {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			json.NewEncoder(w).Encode(map[string]*string{field: value})
-			return
-		} else {
-			// Handle invalid field request
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			json.NewEncoder(w).Encode(map[string]*string{field: nil})
-			return
-		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]*string{field: value})
+		return
 	}
 
-	// If no specific field is requested, return the whole data
+	// Default case: return full IP data
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	callback := r.URL.Query().Get("callback")
-	enableJSONP := callback != "" && len(callback) < 2000 && callbackJSONP.MatchString(callback)
-	if enableJSONP {
-		jsonData, _ := json.MarshalIndent(data, "", "  ")
-		response := fmt.Sprintf("/**/ typeof %s === 'function' && %s(%s);", callback, callback, jsonData)
-		w.Write([]byte(response))
-	} else {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		if r.URL.Query().Get("compact") == "true" {
-			enc.SetIndent("", "")
-		}
-		enc.Encode(data)
-	}
+	json.NewEncoder(w).Encode(data)
 }
 
 var fieldMap = map[string]func(*dataStruct) *string{

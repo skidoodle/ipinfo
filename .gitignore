@@ -1,2 +1,3 @@
 *.mmdb
 .env**
+.geoipupdate.lock

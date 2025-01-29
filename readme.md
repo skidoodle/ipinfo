@@ -8,7 +8,6 @@
 - **ASN Information**: Includes autonomous system number and organization.
 - **Hostname Lookup**: Retrieves the hostname associated with the IP address.
 - **Automatic Database Updates**: Keeps GeoIP databases up-to-date daily.
-- **JSONP Support**: Allows JSONP responses for cross-domain requests.
 
 ## Example Endpoints
 
@@ -37,33 +36,6 @@ $ curl https://ip.albert.lol/9.9.9.9/city
 {
   "city": "Berkeley"
 }
-```
-
-### Use JSONP callback function
-
-```sh
-$ curl https://test.albert.lol/9.9.9.9?callback=Quad9
-/**/ typeof Quad9 === 'function' && Quad9({
-  "ip": "9.9.9.9",
-  "hostname": "dns9.quad9.net",
-  "asn": "19281",
-  "org": "QUAD9-AS-1",
-  "city": "Berkeley",
-  "region": "California",
-  "country": "United States",
-  "continent": "North America",
-  "timezone": "America/Los_Angeles",
-  "loc": "37.8767,-122.2676"
-});
-```
-
-```html
-<script>
-let Quad9 = function(data) {
-  alert("Quad9's ASN is " + data.asn);
-}
-</script>
-<script src="https://test.albert.lol/9.9.9.9?callback=Quad9"></script>
 ```
 
 ## Running Locally
