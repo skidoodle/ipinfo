@@ -73,7 +73,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": string(invalidIPBytes)})
+			encoder := json.NewEncoder(w)
+			encoder.SetIndent("", "  ")
+			encoder.Encode(map[string]string{"error": string(invalidIPBytes)})
 			return
 		}
 	case 2:
@@ -83,13 +85,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": string(invalidFieldBytes)})
+			encoder := json.NewEncoder(w)
+			encoder.SetIndent("", "  ")
+			encoder.Encode(map[string]string{"error": string(invalidFieldBytes)})
 			return
 		}
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": string(invalidIPBytes)})
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		encoder.Encode(map[string]string{"error": string(invalidIPBytes)})
 		return
 	}
 
@@ -103,7 +109,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	// Check if the IP is a bogon IP
 	if isBogon(ip) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		json.NewEncoder(w).Encode(bogonDataStruct{IP: ip.String(), Bogon: true})
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		encoder.Encode(bogonDataStruct{IP: ip.String(), Bogon: true})
 		return
 	}
 
@@ -118,13 +126,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	if field != "" {
 		value := getField(data, field)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		json.NewEncoder(w).Encode(map[string]*string{field: value})
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		encoder.Encode(map[string]*string{field: value})
 		return
 	}
 
 	// Default case: return full IP data
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(data)
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	encoder.Encode(data)
 }
 
 var fieldMap = map[string]func(*dataStruct) *string{
