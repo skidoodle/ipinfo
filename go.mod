@@ -1,4 +1,4 @@
-module github.com/skidoodle/ipinfo
+module skidoodle/ipinfo
 
 go 1.22.4
 

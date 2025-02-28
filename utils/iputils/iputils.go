@@ -1,16 +1,11 @@
-package main
+package utils
 
 import (
-	"fmt"
-	"log"
 	"net"
-	"net/http"
-	"strings"
-	"sync"
-	"time"
 )
 
-var bogonNets = []*net.IPNet{
+// Contains a list of known bogon IP ranges
+var BogonNets = []*net.IPNet{
 	// IPv4
 	{IP: net.IPv4(0, 0, 0, 0), Mask: net.CIDRMask(8, 32)},          // "This" network
 	{IP: net.IPv4(10, 0, 0, 0), Mask: net.CIDRMask(8, 32)},         // Private-use networks
@@ -69,125 +64,4 @@ var bogonNets = []*net.IPNet{
 	{IP: net.ParseIP("2001:0:e000::/36"), Mask: net.CIDRMask(36, 128)},      // Teredo bogon (224.0.0.0/4)
 	{IP: net.ParseIP("2001:0:f000::/36"), Mask: net.CIDRMask(36, 128)},      // Teredo bogon (240.0.0.0/4)
 	{IP: net.ParseIP("2001:0:ffff:ffff::/64"), Mask: net.CIDRMask(64, 128)}, // Teredo bogon (255.255.255.255/32)
-}
-
-// Check if the IP is a bogon IP
-func isBogon(ip net.IP) bool {
-	for _, net := range bogonNets {
-		if net.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// Get the real IP address from the request headers
-func getRealIP(r *http.Request) string {
-	for _, header := range []string{"CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For"} {
-		if ip := r.Header.Get(header); ip != "" {
-			return strings.TrimSpace(strings.Split(ip, ",")[0])
-		}
-	}
-
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-var ipCache = sync.Map{}
-
-type cachedIPData struct {
-	data *dataStruct
-	time time.Time
-}
-
-const cacheTTL = time.Minute * 10
-
-// Lookup IP data in the databases with caching
-func lookupIPData(ip net.IP) *dataStruct {
-	if cachedData, ok := ipCache.Load(ip.String()); ok {
-		cached := cachedData.(cachedIPData)
-		if time.Since(cached.time) < cacheTTL {
-			return cached.data
-		}
-		ipCache.Delete(ip.String())
-	}
-
-	dbMtx.RLock()
-	defer dbMtx.RUnlock()
-
-	var cityRecord struct {
-		City struct {
-			Names map[string]string `maxminddb:"names"`
-		} `maxminddb:"city"`
-		Subdivisions []struct {
-			Names map[string]string `maxminddb:"names"`
-		} `maxminddb:"subdivisions"`
-		Country struct {
-			IsoCode string            `maxminddb:"iso_code"`
-			Names   map[string]string `maxminddb:"names"`
-		} `maxminddb:"country"`
-		Continent struct {
-			Code  string            `maxminddb:"code"`
-			Names map[string]string `maxminddb:"names"`
-		} `maxminddb:"continent"`
-		Location struct {
-			Latitude  float64 `maxminddb:"latitude"`
-			Longitude float64 `maxminddb:"longitude"`
-			Timezone  string  `maxminddb:"time_zone"`
-		} `maxminddb:"location"`
-	}
-	err := cityDB.Lookup(ip, &cityRecord)
-	if err != nil {
-		log.Printf("Error looking up city data: %v\n", err)
-		return nil
-	}
-
-	var asnRecord struct {
-		AutonomousSystemNumber       uint   `maxminddb:"autonomous_system_number"`
-		AutonomousSystemOrganization string `maxminddb:"autonomous_system_organization"`
-	}
-	err = asnDB.Lookup(ip, &asnRecord)
-	if err != nil {
-		log.Printf("Error looking up ASN data: %v\n", err)
-		return nil
-	}
-
-	hostname, err := net.LookupAddr(ip.String())
-	if err != nil || len(hostname) == 0 {
-		hostname = []string{""}
-	}
-
-	var sd *string
-	if len(cityRecord.Subdivisions) > 0 {
-		name := cityRecord.Subdivisions[0].Names["en"]
-		sd = &name
-	}
-
-	data := &dataStruct{
-		IP:        toPtr(ip.String()),
-		Hostname:  toPtr(strings.TrimSuffix(hostname[0], ".")),
-		ASN:       toPtr(fmt.Sprintf("%d", asnRecord.AutonomousSystemNumber)),
-		Org:       toPtr(asnRecord.AutonomousSystemOrganization),
-		City:      toPtr(cityRecord.City.Names["en"]),
-		Region:    sd,
-		Country:   toPtr(cityRecord.Country.Names["en"]),
-		Continent: toPtr(cityRecord.Continent.Names["en"]),
-		Timezone:  toPtr(cityRecord.Location.Timezone),
-		Loc:       toPtr(fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude)),
-	}
-
-	ipCache.Store(ip.String(), cachedIPData{data: data, time: time.Now()})
-
-	return data
-}
-
-// Convert string to pointer
-func toPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
