@@ -48,10 +48,8 @@ cd ipinfo
 docker build -t ipinfo:main .
 docker run \
 -p 3000:3000
--e GEOIPUPDATE_ACCOUNT_ID=<> \
--e GEOIPUPDATE_LICENSE_KEY=<> \
--e GEOIPUPDATE_EDITION_IDS=<> \
--e GEOIPUPDATE_DB_DIR=<> \
+-e GEOIPUPDATE_ACCOUNT_ID=${GEOIPUPDATE_ACCOUNT_ID} \
+-e GEOIPUPDATE_LICENSE_KEY=${GEOIPUPDATE_LICENSE_KEY} \
 ipinfo:main
 ```
 
@@ -78,14 +76,6 @@ services:
     environment:
       GEOIPUPDATE_ACCOUNT_ID: ${GEOIPUPDATE_ACCOUNT_ID}
       GEOIPUPDATE_LICENSE_KEY: ${GEOIPUPDATE_LICENSE_KEY}
-      GEOIPUPDATE_EDITION_IDS: "GeoLite2-City GeoLite2-ASN"
-      GEOIPUPDATE_DB_DIR: /app
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 ```
 
 ### Docker Run
@@ -96,10 +86,8 @@ docker run \
   --name=ipinfo \
   --restart=unless-stopped \
   -p 3000:3000 \
-  -e GEOIPUPDATE_ACCOUNT_ID=<> \
-  -e GEOIPUPDATE_LICENSE_KEY=<> \
-  -e GEOIPUPDATE_EDITION_IDS=<> \
-  -e GEOIPUPDATE_DB_DIR=<> \
+  -e GEOIPUPDATE_ACCOUNT_ID=${GEOIPUPDATE_ACCOUNT_ID} \
+  -e GEOIPUPDATE_LICENSE_KEY=${GEOIPUPDATE_LICENSE_KEY} \
   ghcr.io/skidoodle/ipinfo:main
 ```
 
