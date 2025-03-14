@@ -114,12 +114,17 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 		hostname = []string{""}
 	}
 
+	var sd *string
+	if len(cityRecord.Subdivisions) > 0 {
+		sd = ToPtr(cityRecord.Subdivisions[0].Names["en"])
+	}
+
 	data := &DataStruct{
 		IP:       ToPtr(ip.String()),
 		Hostname: ToPtr(strings.TrimSuffix(hostname[0], ".")),
 		Org:      ToPtr(fmt.Sprintf("AS%d %s", asnRecord.AutonomousSystemNumber, asnRecord.AutonomousSystemOrganization)),
 		City:     ToPtr(cityRecord.City.Names["en"]),
-		Region:   ToPtr(cityRecord.Subdivisions[0].Names["en"]),
+		Region:   sd,
 		Country:  ToPtr(cityRecord.Country.IsoCode),
 		Timezone: ToPtr(cityRecord.Location.Timezone),
 		Loc:      ToPtr(fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude)),
