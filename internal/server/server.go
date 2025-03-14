@@ -100,16 +100,14 @@ func (s *Server) Shutdown() {
 
 // Field access functions map
 var fieldMap = map[string]func(*common.DataStruct) *string{
-	"ip":        func(d *common.DataStruct) *string { return d.IP },
-	"hostname":  func(d *common.DataStruct) *string { return d.Hostname },
-	"asn":       func(d *common.DataStruct) *string { return d.ASN },
-	"org":       func(d *common.DataStruct) *string { return d.Org },
-	"city":      func(d *common.DataStruct) *string { return d.City },
-	"region":    func(d *common.DataStruct) *string { return d.Region },
-	"country":   func(d *common.DataStruct) *string { return d.Country },
-	"continent": func(d *common.DataStruct) *string { return d.Continent },
-	"timezone":  func(d *common.DataStruct) *string { return d.Timezone },
-	"loc":       func(d *common.DataStruct) *string { return d.Loc },
+	"ip":       func(d *common.DataStruct) *string { return d.IP },
+	"hostname": func(d *common.DataStruct) *string { return d.Hostname },
+	"org":      func(d *common.DataStruct) *string { return d.Org },
+	"city":     func(d *common.DataStruct) *string { return d.City },
+	"region":   func(d *common.DataStruct) *string { return d.Region },
+	"country":  func(d *common.DataStruct) *string { return d.Country },
+	"timezone": func(d *common.DataStruct) *string { return d.Timezone },
+	"loc":      func(d *common.DataStruct) *string { return d.Loc },
 }
 
 // Retrieves a field from the dataStruct using the fieldMap

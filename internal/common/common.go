@@ -14,16 +14,14 @@ import (
 )
 
 type DataStruct struct {
-	IP        *string `json:"ip"`
-	Hostname  *string `json:"hostname"`
-	ASN       *string `json:"asn"`
-	Org       *string `json:"org"`
-	City      *string `json:"city"`
-	Region    *string `json:"region"`
-	Country   *string `json:"country"`
-	Continent *string `json:"continent"`
-	Timezone  *string `json:"timezone"`
-	Loc       *string `json:"loc"`
+	IP       *string `json:"ip"`
+	Hostname *string `json:"hostname"`
+	Org      *string `json:"org"`
+	City     *string `json:"city"`
+	Region   *string `json:"region"`
+	Country  *string `json:"country"`
+	Timezone *string `json:"timezone"`
+	Loc      *string `json:"loc"`
 }
 
 // Global IP cache with 10 minute TTL
@@ -85,10 +83,6 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 			IsoCode string            `maxminddb:"iso_code"`
 			Names   map[string]string `maxminddb:"names"`
 		} `maxminddb:"country"`
-		Continent struct {
-			Code  string            `maxminddb:"code"`
-			Names map[string]string `maxminddb:"names"`
-		} `maxminddb:"continent"`
 		Location struct {
 			Latitude  float64 `maxminddb:"latitude"`
 			Longitude float64 `maxminddb:"longitude"`
@@ -120,23 +114,15 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 		hostname = []string{""}
 	}
 
-	var sd *string
-	if len(cityRecord.Subdivisions) > 0 {
-		name := cityRecord.Subdivisions[0].Names["en"]
-		sd = &name
-	}
-
 	data := &DataStruct{
-		IP:        ToPtr(ip.String()),
-		Hostname:  ToPtr(strings.TrimSuffix(hostname[0], ".")),
-		ASN:       ToPtr(fmt.Sprintf("%d", asnRecord.AutonomousSystemNumber)),
-		Org:       ToPtr(asnRecord.AutonomousSystemOrganization),
-		City:      ToPtr(cityRecord.City.Names["en"]),
-		Region:    sd,
-		Country:   ToPtr(cityRecord.Country.Names["en"]),
-		Continent: ToPtr(cityRecord.Continent.Names["en"]),
-		Timezone:  ToPtr(cityRecord.Location.Timezone),
-		Loc:       ToPtr(fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude)),
+		IP:       ToPtr(ip.String()),
+		Hostname: ToPtr(strings.TrimSuffix(hostname[0], ".")),
+		Org:      ToPtr(fmt.Sprintf("AS%d %s", asnRecord.AutonomousSystemNumber, asnRecord.AutonomousSystemOrganization)),
+		City:     ToPtr(cityRecord.City.Names["en"]),
+		Region:   ToPtr(cityRecord.Subdivisions[0].Names["en"]),
+		Country:  ToPtr(cityRecord.Country.IsoCode),
+		Timezone: ToPtr(cityRecord.Location.Timezone),
+		Loc:      ToPtr(fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude)),
 	}
 
 	// Store in cache
