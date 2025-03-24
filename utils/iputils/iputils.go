@@ -26,7 +26,6 @@ var BogonNets = []*net.IPNet{
 	// IPv6
 	{IP: net.ParseIP("::"), Mask: net.CIDRMask(128, 128)},        // Node-scope unicast unspecified address
 	{IP: net.ParseIP("::1"), Mask: net.CIDRMask(128, 128)},       // Node-scope unicast loopback address
-	{IP: net.ParseIP("::ffff:0:0"), Mask: net.CIDRMask(96, 128)}, // IPv4-mapped addresses
 	{IP: net.ParseIP("::"), Mask: net.CIDRMask(96, 128)},         // IPv4-compatible addresses
 	{IP: net.ParseIP("100::"), Mask: net.CIDRMask(64, 128)},      // Remotely triggered black hole addresses
 	{IP: net.ParseIP("2001:10::"), Mask: net.CIDRMask(28, 128)},  // Overlay routable cryptographic hash identifiers (ORCHID)
