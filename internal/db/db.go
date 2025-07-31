@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"sync"
@@ -26,11 +27,17 @@ var (
 	ErrDownloadFailed   = errors.New("failed to download database")
 )
 
+type ASNRecord struct {
+	AutonomousSystemNumber       uint   `maxminddb:"autonomous_system_number"`
+	AutonomousSystemOrganization string `maxminddb:"autonomous_system_organization"`
+}
+
 // Handles MaxMind GeoIP database operations
 type GeoIPManager struct {
-	cityDB *maxminddb.Reader
-	asnDB  *maxminddb.Reader
-	mu     sync.RWMutex
+	cityDB       *maxminddb.Reader
+	asnDB        *maxminddb.Reader
+	asnPrefixMap map[uint][]*net.IPNet
+	mu           sync.RWMutex
 }
 
 // Creates and initializes a new GeoIP database
@@ -55,7 +62,30 @@ func (g *GeoIPManager) Initialize() error {
 		return err
 	}
 
+	g.buildASNPrefixMap()
+
 	return nil
+}
+
+// buildASNPrefixMap iterates the ASN database once and builds the lookup map.
+func (g *GeoIPManager) buildASNPrefixMap() {
+	log.Println("Building ASN prefix map for fast lookups...")
+	startTime := time.Now()
+
+	g.asnPrefixMap = make(map[uint][]*net.IPNet)
+	networks := g.asnDB.Networks()
+
+	for networks.Next() {
+		var record ASNRecord
+		subnet, err := networks.Network(&record)
+		if err != nil {
+			continue // Skip records that fail to decode
+		}
+		if record.AutonomousSystemNumber > 0 {
+			g.asnPrefixMap[record.AutonomousSystemNumber] = append(g.asnPrefixMap[record.AutonomousSystemNumber], subnet)
+		}
+	}
+	log.Printf("Finished building ASN prefix map in %v", time.Since(startTime))
 }
 
 // Opens the city database, downloading it if necessary
@@ -152,6 +182,13 @@ func (g *GeoIPManager) GetASNDB() *maxminddb.Reader {
 	return g.asnDB
 }
 
+// GetASNPrefixes returns the pre-computed list of prefixes for an ASN.
+func (g *GeoIPManager) GetASNPrefixes(asn uint) []*net.IPNet {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.asnPrefixMap[asn]
+}
+
 // Sets up automatic database updates
 func (g *GeoIPManager) StartUpdater(ctx context.Context, updateInterval time.Duration) {
 	log.Printf("Starting MaxMind GeoIP database updater with interval: %s", updateInterval)
@@ -208,6 +245,9 @@ func (g *GeoIPManager) UpdateDatabases() error {
 	if err != nil {
 		return fmt.Errorf("reopening ASN database: %w", err)
 	}
+
+	// Rebuild the prefix map with the new data.
+	g.buildASNPrefixMap()
 
 	log.Println("Successfully updated and reloaded GeoIP databases")
 	return nil

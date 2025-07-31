@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,14 +33,12 @@ func (w gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
-// HTTP server and its dependencies
 type Server struct {
 	geoIP          *db.GeoIPManager
 	server         *http.Server
 	shutdownSignal chan struct{}
 }
 
-// Creates a new server with the given GeoIPManager
 func NewServer(geoIP *db.GeoIPManager) *Server {
 	s := &Server{
 		geoIP:          geoIP,
@@ -47,10 +46,9 @@ func NewServer(geoIP *db.GeoIPManager) *Server {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/health", utils.HealthCheck()) // Register healthcheck
-	mux.HandleFunc("/", s.handler)             // Main handler
+	mux.Handle("/health", utils.HealthCheck())
+	mux.HandleFunc("/", s.router)
 
-	// Create HTTP server
 	s.server = &http.Server{
 		Addr:         ":3000",
 		Handler:      mux,
@@ -62,9 +60,7 @@ func NewServer(geoIP *db.GeoIPManager) *Server {
 	return s
 }
 
-// Starts the HTTP server
 func (s *Server) Start(ctx context.Context) error {
-	// Start the server in a goroutine
 	go func() {
 		log.Println("Server listening on :3000")
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -72,7 +68,6 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}()
 
-	// Wait for shutdown signal or context cancellation
 	select {
 	case <-s.shutdownSignal:
 		log.Println("Shutdown requested internally")
@@ -80,11 +75,9 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Println("Shutdown requested from context")
 	}
 
-	// Create shutdown context with timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Shutdown the server
 	if err := s.server.Shutdown(shutdownCtx); err != nil {
 		return err
 	}
@@ -93,12 +86,10 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// Graceful server shutdown
 func (s *Server) Shutdown() {
 	close(s.shutdownSignal)
 }
 
-// Field access functions map
 var fieldMap = map[string]func(*common.DataStruct) *string{
 	"ip":       func(d *common.DataStruct) *string { return d.IP },
 	"hostname": func(d *common.DataStruct) *string { return d.Hostname },
@@ -110,7 +101,6 @@ var fieldMap = map[string]func(*common.DataStruct) *string{
 	"loc":      func(d *common.DataStruct) *string { return d.Loc },
 }
 
-// Retrieves a field from the dataStruct using the fieldMap
 func getField(data *common.DataStruct, field string) *string {
 	if f, ok := fieldMap[field]; ok {
 		return f(data)
@@ -118,11 +108,7 @@ func getField(data *common.DataStruct, field string) *string {
 	return nil
 }
 
-// Processes HTTP requests
-func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
-	requestedThings := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-
-	// Enable gzip compression if requested
+func (s *Server) router(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		w.Header().Set("Content-Encoding", "gzip")
 		gz := gzip.NewWriter(w)
@@ -130,9 +116,54 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 		w = &gzipResponseWriter{Writer: gz, ResponseWriter: w}
 	}
 
+	path := strings.Trim(r.URL.Path, "/")
+	lowerPath := strings.ToLower(path)
+
+	if strings.HasPrefix(lowerPath, "as") {
+		s.handleASNLookup(w, r, path)
+		return
+	}
+
+	s.handleIPLookup(w, r, path)
+}
+
+func (s *Server) handleASNLookup(w http.ResponseWriter, _ *http.Request, path string) {
+	var asnStr string
+	lowerPath := strings.ToLower(path)
+
+	if strings.HasPrefix(lowerPath, "asn/") {
+		asnStr = path[4:]
+	} else if strings.HasPrefix(lowerPath, "as") {
+		asnStr = path[2:]
+	} else {
+		sendJSONError(w, "Invalid ASN query format. Use /asn/<number> or /AS<number>.", http.StatusBadRequest)
+		return
+	}
+
+	asn, err := strconv.ParseUint(asnStr, 10, 32)
+	if err != nil || asn == 0 {
+		sendJSONError(w, "Invalid ASN: must be a positive number.", http.StatusBadRequest)
+		return
+	}
+
+	data, err := common.LookupASNData(s.geoIP, uint(asn))
+	if err != nil {
+		if strings.Contains(err.Error(), "no prefixes found") {
+			sendJSONError(w, err.Error(), http.StatusNotFound)
+		} else {
+			log.Printf("Error looking up ASN data for %d: %v", asn, err)
+			sendJSONError(w, "Error retrieving data for ASN.", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	sendJSONResponse(w, data, http.StatusOK)
+}
+
+func (s *Server) handleIPLookup(w http.ResponseWriter, r *http.Request, path string) {
+	requestedThings := strings.Split(path, "/")
 	var IPAddress, field string
 
-	// Parse the request URL
 	switch len(requestedThings) {
 	case 0:
 		IPAddress = common.GetRealIP(r) // Default to visitor's IP
@@ -161,38 +192,32 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the resolved IP
 	ip := net.ParseIP(IPAddress)
 	if ip == nil {
 		sendJSONError(w, "Please provide a valid IP address.", http.StatusBadRequest)
 		return
 	}
 
-	// Check if the IP is bogon
 	if common.IsBogon(ip) {
 		sendJSONResponse(w, bogonDataStruct{IP: ip.String(), Bogon: true}, http.StatusOK)
 		return
 	}
 
-	// Look up IP data
 	data := common.LookupIPData(s.geoIP, ip)
 	if data == nil {
 		sendJSONError(w, "Please provide a valid IP address.", http.StatusBadRequest)
 		return
 	}
 
-	// Handle specific field requests
 	if field != "" {
 		value := getField(data, field)
 		sendJSONResponse(w, map[string]*string{field: value}, http.StatusOK)
 		return
 	}
 
-	// Default case: return full IP data
 	sendJSONResponse(w, data, http.StatusOK)
 }
 
-// Sends a JSON response with the given data and status code
 func sendJSONResponse(w http.ResponseWriter, data any, statusCode int) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusCode)
@@ -203,21 +228,16 @@ func sendJSONResponse(w http.ResponseWriter, data any, statusCode int) {
 	}
 }
 
-// Sends a JSON error response
 func sendJSONError(w http.ResponseWriter, errMsg string, statusCode int) {
 	sendJSONResponse(w, map[string]string{"error": errMsg}, statusCode)
 }
 
-// Initializes and starts the server with the given GeoIPManager
 func StartServer(ctx context.Context, geoIP *db.GeoIPManager) error {
-	// Create new server with the GeoIPManager
 	server := NewServer(geoIP)
 
-	// Set up signal handling for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Handle shutdown signals
 	go func() {
 		select {
 		case <-sigCh:
@@ -229,6 +249,5 @@ func StartServer(ctx context.Context, geoIP *db.GeoIPManager) error {
 		}
 	}()
 
-	// Start the server
 	return server.Start(ctx)
 }

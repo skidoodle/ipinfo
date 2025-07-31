@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,11 +25,37 @@ type DataStruct struct {
 	Loc      *string `json:"loc"`
 }
 
-// Global IP cache with 10 minute TTL
+type ASNDataResponse struct {
+	ASNDetails    ASNDetails    `json:"asn_details"`
+	Prefixes      PrefixInfo    `json:"prefixes"`
+	SourceDetails SourceDetails `json:"source_details"`
+}
+
+type ASNDetails struct {
+	ASN  uint   `json:"asn"`
+	Name string `json:"name"`
+}
+
+type PrefixInfo struct {
+	IPv4 []string `json:"ipv4"`
+	IPv6 []string `json:"ipv6"`
+}
+
+type SourceDetails struct {
+	Source string `json:"source"`
+}
+
+// Global caches with 10 minute TTL
 var ipCache = NewIPCache(10 * time.Minute)
+var asnCache = NewASNCache(10 * time.Minute)
 
 type cachedIPData struct {
 	data *DataStruct
+	time time.Time
+}
+
+type cachedASNData struct {
+	data *ASNDataResponse
 	time time.Time
 }
 
@@ -45,7 +72,6 @@ func NewIPCache(ttl time.Duration) *IPCache {
 	}
 }
 
-// Set stores an IP in the cache
 func (c *IPCache) Set(ipStr string, data *DataStruct) {
 	c.cache.Store(ipStr, cachedIPData{
 		data: data,
@@ -53,7 +79,6 @@ func (c *IPCache) Set(ipStr string, data *DataStruct) {
 	})
 }
 
-// Get retrieves an IP from the cache if it exists and is not expired
 func (c *IPCache) Get(ipStr string) (*DataStruct, bool) {
 	if cachedData, ok := c.cache.Load(ipStr); ok {
 		cached := cachedData.(cachedIPData)
@@ -65,9 +90,37 @@ func (c *IPCache) Get(ipStr string) (*DataStruct, bool) {
 	return nil, false
 }
 
+type ASNCache struct {
+	cache sync.Map
+	ttl   time.Duration
+}
+
+func NewASNCache(ttl time.Duration) *ASNCache {
+	return &ASNCache{
+		ttl: ttl,
+	}
+}
+
+func (c *ASNCache) Set(asn uint, data *ASNDataResponse) {
+	c.cache.Store(asn, cachedASNData{
+		data: data,
+		time: time.Now(),
+	})
+}
+
+func (c *ASNCache) Get(asn uint) (*ASNDataResponse, bool) {
+	if cachedData, ok := c.cache.Load(asn); ok {
+		cached := cachedData.(cachedASNData)
+		if time.Since(cached.time) < c.ttl {
+			return cached.data, true
+		}
+		c.cache.Delete(asn)
+	}
+	return nil, false
+}
+
 // LookupIPData looks up IP data in the databases with caching
 func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
-	// Check cache first
 	if data, found := ipCache.Get(ip.String()); found {
 		return data
 	}
@@ -90,7 +143,6 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 		} `maxminddb:"location"`
 	}
 
-	// Get database readers using thread-safe accessor methods
 	cityDB := geoIP.GetCityDB()
 	err := cityDB.Lookup(ip, &cityRecord)
 	if err != nil {
@@ -98,10 +150,7 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 		return nil
 	}
 
-	var asnRecord struct {
-		AutonomousSystemNumber       uint   `maxminddb:"autonomous_system_number"`
-		AutonomousSystemOrganization string `maxminddb:"autonomous_system_organization"`
-	}
+	var asnRecord db.ASNRecord
 	asnDB := geoIP.GetASNDB()
 	err = asnDB.Lookup(ip, &asnRecord)
 	if err != nil {
@@ -130,10 +179,57 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 		Loc:      ToPtr(fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude)),
 	}
 
-	// Store in cache
 	ipCache.Set(ip.String(), data)
-
 	return data
+}
+
+func LookupASNData(geoIP *db.GeoIPManager, targetASN uint) (*ASNDataResponse, error) {
+	if data, found := asnCache.Get(targetASN); found {
+		return data, nil
+	}
+
+	prefixes := geoIP.GetASNPrefixes(targetASN)
+	if len(prefixes) == 0 {
+		return nil, fmt.Errorf("no prefixes found for ASN %d in the database", targetASN)
+	}
+
+	var orgName string
+	var ipv4Prefixes, ipv6Prefixes []string
+
+	var record db.ASNRecord
+	if err := geoIP.GetASNDB().Lookup(prefixes[0].IP, &record); err == nil {
+		orgName = record.AutonomousSystemOrganization
+	}
+
+	for _, prefix := range prefixes {
+		prefixStr := prefix.String()
+		if strings.Contains(prefixStr, ":") {
+			ipv6Prefixes = append(ipv6Prefixes, prefixStr)
+		} else {
+			ipv4Prefixes = append(ipv4Prefixes, prefixStr)
+		}
+	}
+
+	sort.Strings(ipv4Prefixes)
+	sort.Strings(ipv6Prefixes)
+
+	response := &ASNDataResponse{
+		ASNDetails: ASNDetails{
+			ASN:  targetASN,
+			Name: orgName,
+		},
+		Prefixes: PrefixInfo{
+			IPv4: ipv4Prefixes,
+			IPv6: ipv6Prefixes,
+		},
+		SourceDetails: SourceDetails{
+			Source: "GeoLite2-ASN.mmdb",
+		},
+	}
+
+	asnCache.Set(targetASN, response)
+
+	return response, nil
 }
 
 // ToPtr converts string to pointer
@@ -156,14 +252,12 @@ func IsBogon(ip net.IP) bool {
 
 // GetRealIP extracts the client's real IP address from request headers
 func GetRealIP(r *http.Request) string {
-	// Try common proxy headers first
 	for _, header := range []string{"CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For"} {
 		if ip := r.Header.Get(header); ip != "" {
 			return strings.TrimSpace(strings.Split(ip, ",")[0])
 		}
 	}
 
-	// Fall back to remote address
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
