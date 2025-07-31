@@ -26,12 +26,11 @@ type DataStruct struct {
 }
 
 type ASNDataResponse struct {
-	ASNDetails    ASNDetails    `json:"asn_details"`
-	Prefixes      PrefixInfo    `json:"prefixes"`
-	SourceDetails SourceDetails `json:"source_details"`
+	Details  Details    `json:"details"`
+	Prefixes PrefixInfo `json:"prefixes"`
 }
 
-type ASNDetails struct {
+type Details struct {
 	ASN  uint   `json:"asn"`
 	Name string `json:"name"`
 }
@@ -39,10 +38,6 @@ type ASNDetails struct {
 type PrefixInfo struct {
 	IPv4 []string `json:"ipv4"`
 	IPv6 []string `json:"ipv6"`
-}
-
-type SourceDetails struct {
-	Source string `json:"source"`
 }
 
 // Global caches with 10 minute TTL
@@ -214,16 +209,13 @@ func LookupASNData(geoIP *db.GeoIPManager, targetASN uint) (*ASNDataResponse, er
 	sort.Strings(ipv6Prefixes)
 
 	response := &ASNDataResponse{
-		ASNDetails: ASNDetails{
+		Details: Details{
 			ASN:  targetASN,
 			Name: orgName,
 		},
 		Prefixes: PrefixInfo{
 			IPv4: ipv4Prefixes,
 			IPv6: ipv6Prefixes,
-		},
-		SourceDetails: SourceDetails{
-			Source: "GeoLite2-ASN.mmdb",
 		},
 	}
 
