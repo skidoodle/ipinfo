@@ -2,43 +2,40 @@ package main
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	db "skidoodle/ipinfo/internal/db"
+	logger "skidoodle/ipinfo/internal/logger"
 	server "skidoodle/ipinfo/internal/server"
+
+	"github.com/joho/godotenv"
 )
 
+// main is the entry point of the application
 func main() {
-	// Create context with cancellation for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background())
+	if err := godotenv.Load(); err != nil {
+		logger.Log.Info("No .env file found, using system environment variables")
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Set up signal handling for graceful shutdown
-	go handleSignals(cancel)
-
-	// Initialize GeoIP manager from internal/db package
 	geoIP, err := db.NewGeoIPManager()
 	if err != nil {
-		log.Fatalf("Failed to initialize GeoIP databases: %v", err)
+		logger.Log.Error("Failed to initialize GeoIP databases", "error", err)
+		os.Exit(1)
 	}
 	defer geoIP.Close()
 
-	// Start database updater in background (update every 24 hours)
 	geoIP.StartUpdater(ctx, 24*time.Hour)
 
-	// Start health check and server
-	server.StartServer(ctx, geoIP)
-}
-
-// handleSignals gracefully handles termination signals
-func handleSignals(cancel context.CancelFunc) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigCh
-	log.Printf("Received signal %v, shutting down gracefully", sig)
-	cancel()
+	logger.Log.Info("Starting server...")
+	if err := server.StartServer(ctx, geoIP); err != nil {
+		logger.Log.Error("Server failed", "error", err)
+		os.Exit(1)
+	}
+	logger.Log.Info("Application shut down gracefully")
 }

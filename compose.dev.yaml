@@ -4,7 +4,6 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ipinfo
-    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:

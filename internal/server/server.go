@@ -4,92 +4,125 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	common "skidoodle/ipinfo/internal/common"
 	db "skidoodle/ipinfo/internal/db"
+	"skidoodle/ipinfo/internal/logger"
 	utils "skidoodle/ipinfo/utils/health"
 )
 
+// favicon is the SVG data for the favicon
+const favicon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"></svg>`
+
+// bogonDataStruct represents the response structure for bogon IP queries
 type bogonDataStruct struct {
 	IP    string `json:"ip"`
 	Bogon bool   `json:"bogon"`
 }
 
+// gzipResponseWriter is a wrapper for gzip compression
 type gzipResponseWriter struct {
 	http.ResponseWriter
 	Writer *gzip.Writer
 }
 
+// Write writes the compressed data to the response
 func (w gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
+// Server represents the HTTP server
 type Server struct {
-	geoIP          *db.GeoIPManager
-	server         *http.Server
-	shutdownSignal chan struct{}
+	server *http.Server
 }
 
+// NewServer creates a new HTTP server
 func NewServer(geoIP *db.GeoIPManager) *Server {
-	s := &Server{
-		geoIP:          geoIP,
-		shutdownSignal: make(chan struct{}),
-	}
-
 	mux := http.NewServeMux()
 	mux.Handle("/health", utils.HealthCheck())
-	mux.HandleFunc("/", s.router)
+	mux.HandleFunc("/favicon.ico", faviconHandler)
+	mux.HandleFunc("/", router(geoIP))
 
-	s.server = &http.Server{
-		Addr:         ":3000",
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+	// Chain the logging middleware
+	var handler http.Handler = mux
+	handler = loggingMiddleware(handler)
+
+	return &Server{
+		server: &http.Server{
+			Addr:         ":3000",
+			Handler:      handler,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		},
 	}
-
-	return s
 }
 
-func (s *Server) Start(ctx context.Context) error {
+// StartServer starts the HTTP server
+func StartServer(ctx context.Context, geoIP *db.GeoIPManager) error {
+	server := NewServer(geoIP)
+
 	go func() {
-		log.Println("Server listening on :3000")
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+		logger.Log.Info("Server listening", "address", server.server.Addr)
+		if err := server.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Log.Error("Server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	select {
-	case <-s.shutdownSignal:
-		log.Println("Shutdown requested internally")
-	case <-ctx.Done():
-		log.Println("Shutdown requested from context")
-	}
+	<-ctx.Done()
+
+	logger.Log.Info("Shutdown signal received, shutting down server gracefully...")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := s.server.Shutdown(shutdownCtx); err != nil {
+	if err := server.server.Shutdown(shutdownCtx); err != nil {
+		logger.Log.Error("Server shutdown failed", "error", err)
 		return err
 	}
 
-	log.Println("Server shutdown complete")
+	logger.Log.Info("Server shutdown complete")
 	return nil
 }
 
-func (s *Server) Shutdown() {
-	close(s.shutdownSignal)
+// router returns the HTTP request router for the GeoIP service
+func router(geoIP *db.GeoIPManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			defer gz.Close()
+			w = &gzipResponseWriter{Writer: gz, ResponseWriter: w}
+		}
+
+		path := strings.Trim(r.URL.Path, "/")
+		lowerPath := strings.ToLower(path)
+
+		if strings.HasPrefix(lowerPath, "as") {
+			handleASNLookup(w, r, path, geoIP)
+			return
+		}
+
+		handleIPLookup(w, r, path, geoIP)
+	}
 }
 
+// faviconHandler handles requests for the favicon
+func faviconHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(favicon))
+}
+
+// fieldMap maps request fields to their corresponding data struct fields
 var fieldMap = map[string]func(*common.DataStruct) *string{
 	"ip":       func(d *common.DataStruct) *string { return d.IP },
 	"hostname": func(d *common.DataStruct) *string { return d.Hostname },
@@ -101,6 +134,7 @@ var fieldMap = map[string]func(*common.DataStruct) *string{
 	"loc":      func(d *common.DataStruct) *string { return d.Loc },
 }
 
+// getField retrieves the value of a specific field from the data struct
 func getField(data *common.DataStruct, field string) *string {
 	if f, ok := fieldMap[field]; ok {
 		return f(data)
@@ -108,26 +142,8 @@ func getField(data *common.DataStruct, field string) *string {
 	return nil
 }
 
-func (s *Server) router(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		defer gz.Close()
-		w = &gzipResponseWriter{Writer: gz, ResponseWriter: w}
-	}
-
-	path := strings.Trim(r.URL.Path, "/")
-	lowerPath := strings.ToLower(path)
-
-	if strings.HasPrefix(lowerPath, "as") {
-		s.handleASNLookup(w, r, path)
-		return
-	}
-
-	s.handleIPLookup(w, r, path)
-}
-
-func (s *Server) handleASNLookup(w http.ResponseWriter, _ *http.Request, path string) {
+// handleASNLookup handles ASN lookup requests
+func handleASNLookup(w http.ResponseWriter, _ *http.Request, path string, geoIP *db.GeoIPManager) {
 	var asnStr string
 	lowerPath := strings.ToLower(path)
 
@@ -146,12 +162,12 @@ func (s *Server) handleASNLookup(w http.ResponseWriter, _ *http.Request, path st
 		return
 	}
 
-	data, err := common.LookupASNData(s.geoIP, uint(asn))
+	data, err := common.LookupASNData(geoIP, uint(asn))
 	if err != nil {
 		if strings.Contains(err.Error(), "no prefixes found") {
 			sendJSONError(w, err.Error(), http.StatusNotFound)
 		} else {
-			log.Printf("Error looking up ASN data for %d: %v", asn, err)
+			logger.Log.Error("Error looking up ASN data", "asn", asn, "error", err)
 			sendJSONError(w, "Error retrieving data for ASN.", http.StatusInternalServerError)
 		}
 		return
@@ -160,21 +176,22 @@ func (s *Server) handleASNLookup(w http.ResponseWriter, _ *http.Request, path st
 	sendJSONResponse(w, data, http.StatusOK)
 }
 
-func (s *Server) handleIPLookup(w http.ResponseWriter, r *http.Request, path string) {
+// handleIPLookup handles IP lookup requests
+func handleIPLookup(w http.ResponseWriter, r *http.Request, path string, geoIP *db.GeoIPManager) {
 	requestedThings := strings.Split(path, "/")
 	var IPAddress, field string
 
 	switch len(requestedThings) {
 	case 0:
-		IPAddress = common.GetRealIP(r) // Default to visitor's IP
+		IPAddress = common.GetRealIP(r)
 	case 1:
 		if requestedThings[0] == "" {
-			IPAddress = common.GetRealIP(r) // Handle root page case
+			IPAddress = common.GetRealIP(r)
 		} else if _, ok := fieldMap[requestedThings[0]]; ok {
 			IPAddress = common.GetRealIP(r)
 			field = requestedThings[0]
 		} else if net.ParseIP(requestedThings[0]) != nil {
-			IPAddress = requestedThings[0] // Valid IP provided
+			IPAddress = requestedThings[0]
 		} else {
 			sendJSONError(w, "Please provide a valid IP address.", http.StatusBadRequest)
 			return
@@ -203,7 +220,7 @@ func (s *Server) handleIPLookup(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
-	data := common.LookupIPData(s.geoIP, ip)
+	data := common.LookupIPData(geoIP, ip)
 	if data == nil {
 		sendJSONError(w, "Please provide a valid IP address.", http.StatusBadRequest)
 		return
@@ -218,36 +235,32 @@ func (s *Server) handleIPLookup(w http.ResponseWriter, r *http.Request, path str
 	sendJSONResponse(w, data, http.StatusOK)
 }
 
+// sendJSONResponse sends a JSON response with the given data and status code.
 func sendJSONResponse(w http.ResponseWriter, data any, statusCode int) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusCode)
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(data); err != nil {
-		log.Printf("Error encoding JSON response: %v", err)
+		logger.Log.Error("Error encoding JSON response", "error", err)
 	}
 }
 
+// sendJSONError sends a JSON error response with the given message and status code.
 func sendJSONError(w http.ResponseWriter, errMsg string, statusCode int) {
 	sendJSONResponse(w, map[string]string{"error": errMsg}, statusCode)
 }
 
-func StartServer(ctx context.Context, geoIP *db.GeoIPManager) error {
-	server := NewServer(geoIP)
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		select {
-		case <-sigCh:
-			log.Println("Received termination signal")
-			server.Shutdown()
-		case <-ctx.Done():
-			log.Println("Context cancelled")
-			server.Shutdown()
-		}
-	}()
-
-	return server.Start(ctx)
+// loggingMiddleware logs the incoming HTTP request and its duration.
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		logger.Log.Info("HTTP request",
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.String("remote_addr", r.RemoteAddr),
+			slog.Duration("duration", time.Since(start)),
+		)
+	})
 }

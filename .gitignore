@@ -1,3 +1,10 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.env
 *.mmdb
-.env**
 .geoipupdate.lock

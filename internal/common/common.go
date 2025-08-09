@@ -14,6 +14,7 @@ import (
 	iputils "skidoodle/ipinfo/utils/iputils"
 )
 
+// DataStruct represents the structure of the IP data returned by the API.
 type DataStruct struct {
 	IP       *string `json:"ip"`
 	Hostname *string `json:"hostname"`
@@ -25,16 +26,19 @@ type DataStruct struct {
 	Loc      *string `json:"loc"`
 }
 
+// ASNDataResponse represents the structure of the ASN data returned by the API.
 type ASNDataResponse struct {
 	Details  Details    `json:"details"`
 	Prefixes PrefixInfo `json:"prefixes"`
 }
 
+// Details represents the structure of the ASN details returned by the API.
 type Details struct {
 	ASN  uint   `json:"asn"`
 	Name string `json:"name"`
 }
 
+// PrefixInfo represents the structure of the ASN prefix information returned by the API.
 type PrefixInfo struct {
 	IPv4 []string `json:"ipv4"`
 	IPv6 []string `json:"ipv6"`
@@ -44,11 +48,13 @@ type PrefixInfo struct {
 var ipCache = NewIPCache(10 * time.Minute)
 var asnCache = NewASNCache(10 * time.Minute)
 
+// cachedIPData represents a cached IP lookup result.
 type cachedIPData struct {
 	data *DataStruct
 	time time.Time
 }
 
+// cachedASNData represents a cached ASN lookup result.
 type cachedASNData struct {
 	data *ASNDataResponse
 	time time.Time
@@ -67,6 +73,7 @@ func NewIPCache(ttl time.Duration) *IPCache {
 	}
 }
 
+// Set adds a new entry to the IP cache
 func (c *IPCache) Set(ipStr string, data *DataStruct) {
 	c.cache.Store(ipStr, cachedIPData{
 		data: data,
@@ -74,6 +81,7 @@ func (c *IPCache) Set(ipStr string, data *DataStruct) {
 	})
 }
 
+// Get retrieves an entry from the IP cache
 func (c *IPCache) Get(ipStr string) (*DataStruct, bool) {
 	if cachedData, ok := c.cache.Load(ipStr); ok {
 		cached := cachedData.(cachedIPData)
@@ -85,17 +93,20 @@ func (c *IPCache) Get(ipStr string) (*DataStruct, bool) {
 	return nil, false
 }
 
+// ASNCache provides thread-safe caching of ASN lookup results
 type ASNCache struct {
 	cache sync.Map
 	ttl   time.Duration
 }
 
+// NewASNCache creates a new ASN cache with the specified TTL
 func NewASNCache(ttl time.Duration) *ASNCache {
 	return &ASNCache{
 		ttl: ttl,
 	}
 }
 
+// Set adds a new entry to the ASN cache
 func (c *ASNCache) Set(asn uint, data *ASNDataResponse) {
 	c.cache.Store(asn, cachedASNData{
 		data: data,
@@ -103,6 +114,7 @@ func (c *ASNCache) Set(asn uint, data *ASNDataResponse) {
 	})
 }
 
+// Get retrieves an entry from the ASN cache
 func (c *ASNCache) Get(asn uint) (*ASNDataResponse, bool) {
 	if cachedData, ok := c.cache.Load(asn); ok {
 		cached := cachedData.(cachedASNData)
@@ -178,6 +190,7 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 	return data
 }
 
+// LookupASNData looks up ASN data in the databases with caching
 func LookupASNData(geoIP *db.GeoIPManager, targetASN uint) (*ASNDataResponse, error) {
 	if data, found := asnCache.Get(targetASN); found {
 		return data, nil
