@@ -4,7 +4,7 @@ import (
 	"net"
 )
 
-// Contains a list of known bogon IP ranges
+// BogonNets Contains a list of known bogon IP ranges
 var BogonNets = []*net.IPNet{
 	// IPv4
 	{IP: net.IPv4(0, 0, 0, 0), Mask: net.CIDRMask(8, 32)},          // "This" network

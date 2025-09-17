@@ -7,6 +7,8 @@
 - **IP Geolocation**: Provides city, region, country, continent, and coordinates for any IP address.
 - **ASN Information**: Includes autonomous system number and organization.
 - **Hostname Lookup**: Retrieves the hostname associated with the IP address.
+- **Domain WHOIS**: Fetches structured WHOIS data for any domain.
+- **Domain DNS Records**: Retrieves common DNS records (A, AAAA, CNAME, MX, TXT, NS).
 - **Automatic Database Updates**: Keeps GeoIP databases up-to-date daily.
 
 ## Example Endpoints
@@ -71,6 +73,46 @@ $ curl https://ip.albert.lol/AS13335
   }
 }
 ```
+
+### Get WHOIS and DNS records for a domain
+```sh
+$ curl https://ip.albert.lol/example.com
+{
+  "whois": {
+    "domain": {
+      "id": "2336799_DOMAIN_COM-VRSN",
+      "domain": "example.com",
+      "whois_server": "whois.iana.org",
+      "status": [
+        "clientDeleteProhibited",
+        "clientTransferProhibited",
+        "clientUpdateProhibited"
+      ],
+      "name_servers": [
+        "a.iana-servers.net",
+        "b.iana-servers.net"
+      ],
+      "dnssec": true,
+      "created_date": "1995-08-14T04:00:00Z",
+      "updated_date": "2025-08-14T07:01:39Z",
+      "expiration_date": "2026-08-13T04:00:00Z"
+    }
+  },
+  "dns": {
+    "A": [
+      "93.184.216.34"
+    ],
+    "AAAA": [
+      "2606:2800:220:1:248:1893:25c8:1946"
+    ],
+    "NS": [
+      "a.iana-servers.net",
+      "b.iana-servers.net"
+    ]
+  }
+}
+```
+
 ## Running Locally
 
 ### With Docker

@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 )
@@ -10,12 +10,18 @@ import (
 func main() {
 	resp, err := http.Get("http://localhost:3000/health")
 	if err != nil {
-		log.Fatalf("Error performing health check: %v", err)
+		slog.Error("error performing healthcheck", "err", err)
+		os.Exit(1)
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		if cerr := resp.Body.Close(); err != nil {
+			slog.Warn("failed to close response body", "err", cerr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Health check failed: Status code %d", resp.StatusCode)
+		slog.Error("healthcheck failed", "status", resp.StatusCode)
 		os.Exit(1)
 	}
 

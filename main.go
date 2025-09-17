@@ -2,14 +2,14 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	db "skidoodle/ipinfo/internal/db"
-	logger "skidoodle/ipinfo/internal/logger"
-	server "skidoodle/ipinfo/internal/server"
+	"ipinfo/internal/db"
+	"ipinfo/internal/server"
 
 	"github.com/joho/godotenv"
 )
@@ -17,7 +17,7 @@ import (
 // main is the entry point of the application
 func main() {
 	if err := godotenv.Load(); err != nil {
-		logger.Log.Info("No .env file found, using system environment variables")
+		slog.Info("env file not found, using system environment variables")
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -25,17 +25,18 @@ func main() {
 
 	geoIP, err := db.NewGeoIPManager()
 	if err != nil {
-		logger.Log.Error("Failed to initialize GeoIP databases", "error", err)
+		slog.Error("failed to initialize databases", "error", err)
 		os.Exit(1)
 	}
 	defer geoIP.Close()
 
 	geoIP.StartUpdater(ctx, 24*time.Hour)
 
-	logger.Log.Info("Starting server...")
-	if err := server.StartServer(ctx, geoIP); err != nil {
-		logger.Log.Error("Server failed", "error", err)
+	slog.Info("starting server")
+	appServer := server.NewServer(geoIP)
+	if err := appServer.Start(ctx); err != nil {
+		slog.Error("server failed to start", "error", err)
 		os.Exit(1)
 	}
-	logger.Log.Info("Application shut down gracefully")
+	slog.Info("server shut down gracefully")
 }

@@ -8,3 +8,4 @@
 .env
 *.mmdb
 .geoipupdate.lock
+.idea/
