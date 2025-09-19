@@ -11,6 +11,7 @@ import (
 	"ipinfo/internal/db"
 
 	"github.com/likexian/whois-parser"
+	"github.com/miekg/dns"
 	"golang.org/x/net/publicsuffix"
 )
 
@@ -94,11 +95,14 @@ func LookupASNData(geoIP *db.GeoIPManager, targetASN uint) (*ASNDataResponse, er
 
 	var ipv4Prefixes, ipv6Prefixes []string
 	for _, prefix := range prefixes {
-		prefixStr := prefix.String()
-		if strings.Contains(prefixStr, ":") {
-			ipv6Prefixes = append(ipv6Prefixes, prefixStr)
-		} else {
-			ipv4Prefixes = append(ipv4Prefixes, prefixStr)
+		// Filter out bogon prefixes before adding them to the list.
+		if !IsBogon(prefix.IP) {
+			prefixStr := prefix.String()
+			if strings.Contains(prefixStr, ":") {
+				ipv6Prefixes = append(ipv6Prefixes, prefixStr)
+			} else {
+				ipv4Prefixes = append(ipv4Prefixes, prefixStr)
+			}
 		}
 	}
 	sort.Strings(ipv4Prefixes)
@@ -117,6 +121,25 @@ func LookupASNData(geoIP *db.GeoIPManager, targetASN uint) (*ASNDataResponse, er
 
 	cache.Set(targetASN, response)
 	return response, nil
+}
+
+// queryDns performs a DNS query for a specific type against a public resolver.
+func queryDns(domain string, recordType uint16) ([]dns.RR, error) {
+	c := new(dns.Client)
+	m := new(dns.Msg)
+	m.SetQuestion(dns.Fqdn(domain), recordType)
+	m.RecursionDesired = true
+
+	r, _, err := c.Exchange(m, "1.1.1.1:53") // Using Cloudflare's public resolver
+	if err != nil {
+		return nil, err
+	}
+
+	if r.Rcode != dns.RcodeSuccess {
+		return nil, nil // No error, just no records found
+	}
+
+	return r.Answer, nil
 }
 
 // LookupDomainData looks up domain data with caching.
@@ -149,67 +172,64 @@ func LookupDomainData(domain string) (*DomainDataResponse, error) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	lookupTasks := []func(){
-		func() { // A and AAAA records
-			ips, err := net.LookupIP(domain)
-			if err == nil {
-				mu.Lock()
-				defer mu.Unlock()
-				for _, ip := range ips {
-					if ip.To4() != nil {
-						dnsData.A = append(dnsData.A, ip.String())
-					} else {
-						dnsData.AAAA = append(dnsData.AAAA, ip.String())
-					}
-				}
-			}
-		},
-		func() { // CNAME record
-			cname, err := net.LookupCNAME(domain)
-			if err == nil && cname != domain+"." && cname != "" {
-				mu.Lock()
-				defer mu.Unlock()
-				dnsData.CNAME = strings.TrimSuffix(cname, ".")
-			}
-		},
-		func() { // MX records
-			mxs, err := net.LookupMX(domain)
-			if err == nil {
-				mu.Lock()
-				defer mu.Unlock()
-				for _, mx := range mxs {
-					dnsData.MX = append(dnsData.MX, fmt.Sprintf("%d %s", mx.Pref, strings.TrimSuffix(mx.Host, ".")))
-				}
-			}
-		},
-		func() { // TXT records
-			txts, err := net.LookupTXT(domain)
-			if err == nil {
-				mu.Lock()
-				defer mu.Unlock()
-				dnsData.TXT = append(dnsData.TXT, txts...)
-			}
-		},
-		func() { // NS records
-			nss, err := net.LookupNS(eTLD)
-			if err == nil {
-				mu.Lock()
-				defer mu.Unlock()
-				for _, ns := range nss {
-					dnsData.NS = append(dnsData.NS, strings.TrimSuffix(ns.Host, "."))
-				}
-			}
-		},
+	recordTypes := map[string]uint16{
+		"A":     dns.TypeA,
+		"AAAA":  dns.TypeAAAA,
+		"CNAME": dns.TypeCNAME,
+		"MX":    dns.TypeMX,
+		"TXT":   dns.TypeTXT,
+		"NS":    dns.TypeNS,
+		"SOA":   dns.TypeSOA,
+		"CAA":   dns.TypeCAA,
 	}
 
-	wg.Add(len(lookupTasks))
-	for _, task := range lookupTasks {
-		go func(t func()) {
+	for key, rType := range recordTypes {
+		wg.Add(1)
+		go func(name string, recordType uint16) {
 			defer wg.Done()
-			t()
-		}(task)
+			answers, err := queryDns(domain, recordType)
+			if err != nil {
+				slog.Debug("dns lookup failed for type", "type", name, "domain", domain, "err", err)
+				return
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			for _, ans := range answers {
+				switch rr := ans.(type) {
+				case *dns.A:
+					dnsData.A = append(dnsData.A, rr.A.String())
+				case *dns.AAAA:
+					dnsData.AAAA = append(dnsData.AAAA, rr.AAAA.String())
+				case *dns.CNAME:
+					dnsData.CNAME = strings.TrimSuffix(rr.Target, ".")
+				case *dns.MX:
+					dnsData.MX = append(dnsData.MX, fmt.Sprintf("%d %s", rr.Preference, strings.TrimSuffix(rr.Mx, ".")))
+				case *dns.TXT:
+					dnsData.TXT = append(dnsData.TXT, strings.Join(rr.Txt, " "))
+				case *dns.NS:
+					dnsData.NS = append(dnsData.NS, strings.TrimSuffix(rr.Ns, "."))
+				case *dns.SOA:
+					soaStr := fmt.Sprintf("%s %s %d %d %d %d %d",
+						strings.TrimSuffix(rr.Ns, "."), strings.TrimSuffix(rr.Mbox, "."),
+						rr.Serial, rr.Refresh, rr.Retry, rr.Expire, rr.Minttl)
+					dnsData.SOA = append(dnsData.SOA, soaStr)
+				case *dns.CAA:
+					dnsData.CAA = append(dnsData.CAA, fmt.Sprintf(`%d %s "%s"`, rr.Flag, rr.Tag, rr.Value))
+				}
+			}
+		}(key, rType)
 	}
+
 	wg.Wait()
+
+	// Sort MX records for consistent output
+	sort.Slice(dnsData.MX, func(i, j int) bool {
+		var prefI, prefJ int
+		_, _ = fmt.Sscanf(dnsData.MX[i], "%d", &prefI)
+		_, _ = fmt.Sscanf(dnsData.MX[j], "%d", &prefJ)
+		return prefI < prefJ
+	})
 
 	response := &DomainDataResponse{
 		Whois: whoisResult,

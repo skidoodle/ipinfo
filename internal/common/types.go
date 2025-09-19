@@ -44,6 +44,8 @@ type DNSData struct {
 	MX    []string `json:"MX,omitempty"`
 	TXT   []string `json:"TXT,omitempty"`
 	NS    []string `json:"NS,omitempty"`
+	SOA   []string `json:"SOA,omitempty"`
+	CAA   []string `json:"CAA,omitempty"`
 }
 
 // WhoisInfo is a sanitized version of the parsed whois data for the API response.
