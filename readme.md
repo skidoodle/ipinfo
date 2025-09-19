@@ -42,7 +42,7 @@ $ curl https://ip.albert.lol/9.9.9.9/city
 
 ### Get details about an ASN
 ```sh
-$ curl https://ip.albert.lol/AS13335
+$ curl https://ip.albert.lol/AS19281
 {
   "details": {
     "asn": 19281,
