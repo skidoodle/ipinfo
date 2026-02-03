@@ -122,8 +122,8 @@ $ curl https://ip.albert.lol/example.com
 ```sh
 git clone https://github.com/skidoodle/ipinfo
 cd ipinfo
-docker build -t ipinfo:main .
-docker run -p 3000:3000 ipinfo:main
+docker build -t ipinfo:latest .
+docker run -p 3000:3000 ipinfo:latest
 ```
 
 ### Without Docker
@@ -141,7 +141,7 @@ go run .
 ```yaml
 services:
   ipinfo:
-    image: ghcr.io/skidoodle/ipinfo:main
+    image: ghcr.io/skidoodle/ipinfo:latest
     container_name: ipinfo
     restart: unless-stopped
     ports:
@@ -156,7 +156,7 @@ docker run \
   --name=ipinfo \
   --restart=unless-stopped \
   -p 3000:3000 \
-  ghcr.io/skidoodle/ipinfo:main
+  ghcr.io/skidoodle/ipinfo:latest
 ```
 
 ## LICENSE
