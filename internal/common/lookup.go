@@ -10,7 +10,7 @@ import (
 
 	"ipinfo/internal/db"
 
-	"github.com/likexian/whois-parser"
+	whoisparser "github.com/likexian/whois-parser"
 	"github.com/miekg/dns"
 	"golang.org/x/net/publicsuffix"
 )
@@ -95,7 +95,6 @@ func LookupASNData(geoIP *db.GeoIPManager, targetASN uint) (*ASNDataResponse, er
 
 	var ipv4Prefixes, ipv6Prefixes []string
 	for _, prefix := range prefixes {
-		// Filter out bogon prefixes before adding them to the list.
 		if !IsBogon(prefix.IP) {
 			prefixStr := prefix.String()
 			if strings.Contains(prefixStr, ":") {
@@ -130,13 +129,13 @@ func queryDns(domain string, recordType uint16) ([]dns.RR, error) {
 	m.SetQuestion(dns.Fqdn(domain), recordType)
 	m.RecursionDesired = true
 
-	r, _, err := c.Exchange(m, "1.1.1.1:53") // Using Cloudflare's public resolver
+	r, _, err := c.Exchange(m, "1.1.1.1:53")
 	if err != nil {
 		return nil, err
 	}
 
 	if r.Rcode != dns.RcodeSuccess {
-		return nil, nil // No error, just no records found
+		return nil, nil
 	}
 
 	return r.Answer, nil
@@ -154,10 +153,10 @@ func LookupDomainData(domain string) (*DomainDataResponse, error) {
 	}
 
 	whoisRaw, err := performWhoisWithFallback(eTLD)
-	var whoisResult interface{}
+	var whoisResult any
 	if err != nil {
-		slog.Error("whois lookup failed after fallback", "domain", eTLD, "err", err)
-		whoisResult = fmt.Sprintf("whois lookup failed: %v", err)
+		slog.Error("whois lookup failed completely", "domain", eTLD, "err", err)
+		whoisResult = nil
 	} else {
 		parsed, parseErr := whoisparser.Parse(whoisRaw)
 		if parseErr != nil {

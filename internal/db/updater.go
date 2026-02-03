@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/oschwald/maxminddb-golang"
@@ -37,7 +36,8 @@ func (g *GeoIPManager) StartUpdater(ctx context.Context, updateInterval time.Dur
 
 // UpdateDatabases downloads new databases and reloads them into the manager.
 func (g *GeoIPManager) UpdateDatabases() error {
-	if err := g.DownloadDatabases(context.Background()); err != nil {
+	tmpFiles, err := g.downloadToTemp(context.Background())
+	if err != nil {
 		return err
 	}
 
@@ -46,68 +46,80 @@ func (g *GeoIPManager) UpdateDatabases() error {
 
 	if g.cityDB != nil {
 		_ = g.cityDB.Close()
+		g.cityDB = nil
 	}
 	if g.asnDB != nil {
 		_ = g.asnDB.Close()
+		g.asnDB = nil
+	}
+
+	for targetPath, tmpPath := range tmpFiles {
+		if err := os.Rename(tmpPath, targetPath); err != nil {
+			slog.Error("failed to replace database file", "target", targetPath, "tmp", tmpPath, "err", err)
+		}
 	}
 
 	var openErr error
 	g.cityDB, openErr = maxminddb.Open(CityDBPath)
 	if openErr != nil {
-		return fmt.Errorf("reopening city database: %w", openErr)
+		slog.Error("failed to reopen city database", "err", openErr)
 	}
 
 	g.asnDB, openErr = maxminddb.Open(ASNDBPath)
 	if openErr != nil {
-		return fmt.Errorf("reopening asn database: %w", openErr)
+		slog.Error("failed to reopen asn database", "err", openErr)
 	}
 
 	g.buildASNPrefixMap()
-	slog.Info("successfully reloaded databases")
+	slog.Info("successfully updated and reloaded databases")
 	return nil
 }
 
-// DownloadDatabases downloads all configured GeoIP database editions.
-func (g *GeoIPManager) DownloadDatabases(ctx context.Context) error {
-	accountID := os.Getenv("GEOIPUPDATE_ACCOUNT_ID")
-	licenseKey := os.Getenv("GEOIPUPDATE_LICENSE_KEY")
-	if accountID == "" || licenseKey == "" {
-		return fmt.Errorf("GEOIPUPDATE_ACCOUNT_ID and GEOIPUPDATE_LICENSE_KEY must be set")
+// downloadToTemp downloads the current month's DB-IP databases to temporary files.
+func (g *GeoIPManager) downloadToTemp(ctx context.Context) (map[string]string, error) {
+	now := time.Now()
+	dateStr := now.Format("2006-01")
+
+	targets := map[string]string{
+		CityDBPath: fmt.Sprintf("dbip-city-lite-%s", dateStr),
+		ASNDBPath:  fmt.Sprintf("dbip-asn-lite-%s", dateStr),
 	}
 
-	editionIDs := os.Getenv("GEOIPUPDATE_EDITION_IDS")
-	if editionIDs == "" {
-		editionIDs = "GeoLite2-City GeoLite2-ASN"
-	}
-
+	results := make(map[string]string)
 	var firstError error
-	for _, editionID := range strings.Fields(editionIDs) {
-		if err := g.downloadEdition(ctx, accountID, licenseKey, editionID); err != nil {
-			slog.Error("failed to download edition", "edition", editionID, "err", err)
+
+	for localPath, urlName := range targets {
+		downloadURL := fmt.Sprintf("https://download.db-ip.com/free/%s.mmdb.gz", urlName)
+		tmpPath := localPath + ".tmp"
+
+		if err := g.downloadFile(ctx, downloadURL, tmpPath); err != nil {
+			slog.Error("failed to download database", "url", downloadURL, "err", err)
 			if firstError == nil {
 				firstError = err
 			}
+			continue
 		}
+		results[localPath] = tmpPath
 	}
-	return firstError
+
+	if firstError != nil {
+		for _, tmp := range results {
+			_ = os.Remove(tmp)
+		}
+		return nil, firstError
+	}
+
+	return results, nil
 }
 
-// downloadEdition downloads a specific GeoIP database edition.
-func (g *GeoIPManager) downloadEdition(ctx context.Context, accountID, licenseKey, editionID string) error {
-	dbPath := editionID + DBExtension
-	slog.Info("checking for updates", "database", dbPath)
+// downloadFile downloads a file from a URL, decompresses it, and saves it to destPath.
+func (g *GeoIPManager) downloadFile(ctx context.Context, url, destPath string) error {
+	slog.Info("checking for updates", "url", url)
 
-	hash, err := fileMD5(dbPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("could not calculate md5 for %s: %w", dbPath, err)
-	}
-
-	downloadURL := fmt.Sprintf("https://updates.maxmind.com/geoip/databases/%s/update?db_md5=%s", editionID, hash)
-	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("could not create request: %w", err)
 	}
-	req.SetBasicAuth(accountID, licenseKey)
 
 	resp, err := g.httpClient.Do(req)
 	if err != nil {
@@ -119,16 +131,11 @@ func (g *GeoIPManager) downloadEdition(ctx context.Context, accountID, licenseKe
 		}
 	}()
 
-	if resp.StatusCode == http.StatusNotModified {
-		slog.Info("database is already up to date", "database", dbPath)
-		return nil
-	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("received non-200 status code: %d - %s", resp.StatusCode, string(body))
+		return fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
 	}
 
-	slog.Info("downloading and decompressing new version", "database", dbPath)
+	slog.Info("downloading and decompressing", "destination", destPath)
 
 	gzr, err := gzip.NewReader(resp.Body)
 	if err != nil {
@@ -140,26 +147,28 @@ func (g *GeoIPManager) downloadEdition(ctx context.Context, accountID, licenseKe
 		}
 	}()
 
-	tmpPath := dbPath + ".tmp"
-	outFile, err := os.Create(tmpPath)
+	outFile, err := os.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("could not create temporary file: %w", err)
 	}
-	defer func() {
+
+	closeFile := func() error {
 		if err := outFile.Close(); err != nil {
-			slog.Error("failed to close output file", "err", err)
+			return fmt.Errorf("failed to close output file: %w", err)
 		}
-	}()
+		return nil
+	}
 
 	if _, err := io.Copy(outFile, gzr); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = closeFile()
+		_ = os.Remove(destPath)
 		return fmt.Errorf("could not decompress and write db file: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, dbPath); err != nil {
-		return fmt.Errorf("could not replace database file: %w", err)
+	if err := closeFile(); err != nil {
+		return err
 	}
 
-	slog.Info("successfully downloaded and updated", "database", dbPath)
+	slog.Info("successfully downloaded", "file", destPath)
 	return nil
 }

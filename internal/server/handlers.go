@@ -47,17 +47,16 @@ func handleDomainLookup(w http.ResponseWriter, _ *http.Request, domain string) {
 
 // handleASNLookup handles ASN lookup requests.
 func handleASNLookup(w http.ResponseWriter, _ *http.Request, path string, geoIP *db.GeoIPManager) {
-	var asnStr string
-	lowerPath := strings.ToLower(path)
+	upperPath := strings.ToUpper(path)
+	cleanPath := path
 
-	if strings.HasPrefix(lowerPath, "asn/") {
-		asnStr = path[4:]
-	} else if strings.HasPrefix(lowerPath, "as") {
-		asnStr = path[2:]
-	} else {
-		sendJSONError(w, "Invalid ASN query format. Use /asn/<number> or /AS<number>.", http.StatusBadRequest)
-		return
+	if strings.HasPrefix(upperPath, "ASN") {
+		cleanPath = path[3:]
+	} else if strings.HasPrefix(upperPath, "AS") {
+		cleanPath = path[2:]
 	}
+
+	asnStr := strings.Trim(cleanPath, "/ ")
 
 	asn, err := strconv.ParseUint(asnStr, 10, 32)
 	if err != nil || asn == 0 {
@@ -86,12 +85,12 @@ func handleIPLookup(w http.ResponseWriter, r *http.Request, path string, geoIP *
 
 	switch len(parts) {
 	case 0:
-		ipAddress = GetRealIP(r) // No more "common." prefix
+		ipAddress = GetRealIP(r)
 	case 1:
 		if parts[0] == "" {
-			ipAddress = GetRealIP(r) // No more "common." prefix
+			ipAddress = GetRealIP(r)
 		} else if _, ok := fieldMap[parts[0]]; ok {
-			ipAddress = GetRealIP(r) // No more "common." prefix
+			ipAddress = GetRealIP(r)
 			field = parts[0]
 		} else {
 			ipAddress = parts[0]

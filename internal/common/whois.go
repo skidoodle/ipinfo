@@ -10,42 +10,57 @@ import (
 	"time"
 
 	"github.com/likexian/whois"
-	"github.com/likexian/whois-parser"
+	whoisparser "github.com/likexian/whois-parser"
 )
 
-// performWhoisWithFallback attempts a WHOIS query and falls back to IPv4 if it suspects an IPv6 issue.
+// performWhoisWithFallback attempts a WHOIS query and falls back to manual lookup if the default fails.
 func performWhoisWithFallback(domain string) (string, error) {
-	result, err := whois.Whois(domain)
+	c := whois.NewClient()
+	c.SetTimeout(5 * time.Second)
+
+	result, err := c.Whois(domain)
 	if err == nil {
 		return result, nil
 	}
 
-	if strings.Contains(err.Error(), "dial tcp [") && strings.Contains(err.Error(), "]:43") {
-		slog.Warn("whois failed with potential ipv6 issue, falling back to ipv4", "domain", domain, "err", err)
+	slog.Warn("standard whois lookup failed, attempting fallback", "domain", domain, "err", err)
 
-		serverHost, serverErr := getWhoisServerForDomain(domain)
-		if serverErr != nil {
-			slog.Error("could not find whois server during fallback", "domain", domain, "err", serverErr)
-			return "", err
-		}
-
-		ips, resolveErr := net.LookupIP(serverHost)
-		if resolveErr != nil {
-			slog.Error("could not resolve whois server hostname during fallback", "server", serverHost, "err", resolveErr)
-			return "", err
-		}
-
-		for _, ip := range ips {
-			if ip.To4() != nil {
-				ipv4Server := ip.String()
-				slog.Info("retrying whois query with explicit ipv4 address", "domain", domain, "server", ipv4Server)
-				return queryWhoisServer(domain, ipv4Server)
-			}
-		}
-		slog.Warn("no ipv4 address found for whois server during fallback", "server", serverHost)
+	serverHost, serverErr := getWhoisServerForDomain(domain)
+	if serverErr != nil {
+		slog.Error("could not find whois server during fallback", "domain", domain, "err", serverErr)
+		return "", err
 	}
 
-	return "", err
+	ips, resolveErr := net.LookupIP(serverHost)
+	if resolveErr != nil {
+		slog.Error("could not resolve whois server hostname during fallback", "server", serverHost, "err", resolveErr)
+		return "", err
+	}
+
+	for _, ip := range ips {
+		if ip.To4() != nil {
+			ipv4Server := ip.String()
+			slog.Info("retrying whois query with explicit ipv4 address", "domain", domain, "server", ipv4Server)
+			res, err := queryWhoisServer(domain, ipv4Server)
+			if err == nil {
+				return res, nil
+			}
+			slog.Warn("fallback query to ipv4 server failed", "server", ipv4Server, "err", err)
+		}
+	}
+
+	for _, ip := range ips {
+		if ip.To4() == nil {
+			ipv6Server := ip.String()
+			slog.Info("retrying whois query with ipv6 address", "domain", domain, "server", ipv6Server)
+			res, err := queryWhoisServer(domain, ipv6Server)
+			if err == nil {
+				return res, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("all whois attempts failed: %w", err)
 }
 
 // getWhoisServerForDomain finds the authoritative WHOIS server for a domain by querying IANA.

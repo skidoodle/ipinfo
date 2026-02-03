@@ -4,8 +4,8 @@ import "errors"
 
 // Constants for database names and paths
 const (
-	CityDBName  = "GeoLite2-City"
-	ASNDBName   = "GeoLite2-ASN"
+	CityDBName  = "dbip-city-lite"
+	ASNDBName   = "dbip-asn-lite"
 	DBExtension = ".mmdb"
 	CityDBPath  = CityDBName + DBExtension
 	ASNDBPath   = ASNDBName + DBExtension

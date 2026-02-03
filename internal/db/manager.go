@@ -1,12 +1,10 @@
 package db
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -25,7 +23,7 @@ type GeoIPManager struct {
 // NewGeoIPManager creates a new GeoIPManager
 func NewGeoIPManager() (*GeoIPManager, error) {
 	manager := &GeoIPManager{
-		httpClient: &http.Client{Timeout: 2 * time.Minute},
+		httpClient: &http.Client{Timeout: 5 * time.Minute},
 	}
 	if err := manager.Initialize(); err != nil {
 		return nil, fmt.Errorf("initializing geoip manager: %w", err)
@@ -33,19 +31,24 @@ func NewGeoIPManager() (*GeoIPManager, error) {
 	return manager, nil
 }
 
-// Initialize initializes the GeoIPManager by opening the database files
+// Initialize initializes the GeoIPManager by opening the database files.
 func (g *GeoIPManager) Initialize() error {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	cityErr := g.openDB(CityDBPath)
+	asnErr := g.openDB(ASNDBPath)
+	g.mu.Unlock()
 
-	if err := g.openDB(CityDBPath); err != nil {
-		return err
-	}
-	if err := g.openDB(ASNDBPath); err != nil {
-		return err
+	if cityErr != nil || asnErr != nil {
+		slog.Info("databases missing or invalid, performing initial update")
+		if err := g.UpdateDatabases(); err != nil {
+			return fmt.Errorf("initial update failed: %w", err)
+		}
+	} else {
+		g.mu.Lock()
+		g.buildASNPrefixMap()
+		g.mu.Unlock()
 	}
 
-	g.buildASNPrefixMap()
 	return nil
 }
 
@@ -65,30 +68,11 @@ func (g *GeoIPManager) Close() {
 	}
 }
 
-// openDB opens a MaxMind DB file, downloading it if it doesn't exist.
+// openDB opens a MaxMind DB file.
 func (g *GeoIPManager) openDB(path string) error {
 	db, err := maxminddb.Open(path)
-	if err == nil {
-		if path == CityDBPath {
-			g.cityDB = db
-		} else {
-			g.asnDB = db
-		}
-		return nil
-	}
-
-	if !os.IsNotExist(err) {
-		return fmt.Errorf("%w: failed to open %s: %v", ErrDatabaseOpen, path, err)
-	}
-
-	slog.Warn("database not found, attempting initial download", "path", path)
-	if err := g.DownloadDatabases(context.Background()); err != nil {
-		return fmt.Errorf("%w: %v", ErrDownloadFailed, err)
-	}
-
-	db, err = maxminddb.Open(path)
 	if err != nil {
-		return fmt.Errorf("%w: failed to open %s after download: %v", ErrDatabaseOpen, path, err)
+		return err
 	}
 
 	if path == CityDBPath {

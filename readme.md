@@ -1,6 +1,6 @@
 # ipinfo
 
-`ipinfo` is a powerful and efficient IP information service written in Go. It fetches GeoIP data to provide detailed information about an IP address, including geographical location, ASN, and related network details. The service automatically updates its GeoIP databases to ensure accuracy and reliability.
+`ipinfo` is a powerful and efficient IP information service written in Go. It fetches GeoIP data to provide detailed information about an IP address, including geographical location, ASN, and related network details. The service automatically updates its GeoIP databases (provided by DB-IP) to ensure accuracy and reliability.
 
 ## Features
 
@@ -9,7 +9,7 @@
 - **Hostname Lookup**: Retrieves the hostname associated with the IP address.
 - **Domain WHOIS**: Fetches structured WHOIS data for any domain.
 - **Domain DNS Records**: Retrieves common DNS records (A, AAAA, CNAME, MX, TXT, NS).
-- **Automatic Database Updates**: Keeps GeoIP databases up-to-date daily.
+- **Automatic Database Updates**: Keeps GeoIP databases up-to-date monthly.
 
 ## Example Endpoints
 
@@ -41,6 +41,7 @@ $ curl https://ip.albert.lol/9.9.9.9/city
 ```
 
 ### Get details about an ASN
+
 ```sh
 $ curl https://ip.albert.lol/AS19281
 {
@@ -75,6 +76,7 @@ $ curl https://ip.albert.lol/AS19281
 ```
 
 ### Get WHOIS and DNS records for a domain
+
 ```sh
 $ curl https://ip.albert.lol/example.com
 {
@@ -121,11 +123,7 @@ $ curl https://ip.albert.lol/example.com
 git clone https://github.com/skidoodle/ipinfo
 cd ipinfo
 docker build -t ipinfo:main .
-docker run \
--p 3000:3000
--e GEOIPUPDATE_ACCOUNT_ID=${GEOIPUPDATE_ACCOUNT_ID} \
--e GEOIPUPDATE_LICENSE_KEY=${GEOIPUPDATE_LICENSE_KEY} \
-ipinfo:main
+docker run -p 3000:3000 ipinfo:main
 ```
 
 ### Without Docker
@@ -148,9 +146,6 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      GEOIPUPDATE_ACCOUNT_ID: ${GEOIPUPDATE_ACCOUNT_ID}
-      GEOIPUPDATE_LICENSE_KEY: ${GEOIPUPDATE_LICENSE_KEY}
 ```
 
 ### Docker Run
@@ -161,8 +156,6 @@ docker run \
   --name=ipinfo \
   --restart=unless-stopped \
   -p 3000:3000 \
-  -e GEOIPUPDATE_ACCOUNT_ID=${GEOIPUPDATE_ACCOUNT_ID} \
-  -e GEOIPUPDATE_LICENSE_KEY=${GEOIPUPDATE_LICENSE_KEY} \
   ghcr.io/skidoodle/ipinfo:main
 ```
 
