@@ -9,3 +9,4 @@
 *.mmdb
 .geoipupdate.lock
 .idea/
+dist/

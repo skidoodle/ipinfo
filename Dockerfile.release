@@ -1,0 +1,24 @@
+FROM alpine:latest AS sys-context
+
+RUN apk add --no-cache ca-certificates tzdata
+
+RUN echo "appuser:x:10001:10001:appuser:/:/sbin/nologin" > /etc/passwd_app \
+    && echo "appuser:x:10001:appuser" > /etc/group_app
+
+RUN mkdir -p /app/data /app/uploads
+
+FROM scratch
+
+COPY --from=sys-context /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=sys-context /usr/share/zoneinfo /usr/share/zoneinfo
+
+COPY --from=sys-context /etc/passwd_app /etc/passwd
+COPY --from=sys-context /etc/group_app /etc/group
+
+COPY ipinfo /app/ipinfo
+
+WORKDIR /app
+USER 10001
+EXPOSE 3000
+
+ENTRYPOINT ["/app/ipinfo"]
