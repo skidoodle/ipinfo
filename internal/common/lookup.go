@@ -12,8 +12,19 @@ import (
 
 	whoisparser "github.com/likexian/whois-parser"
 	"github.com/miekg/dns"
+	"github.com/ringsaturn/tzf"
 	"golang.org/x/net/publicsuffix"
 )
+
+var tzFinder tzf.F
+
+func init() {
+	var err error
+	tzFinder, err = tzf.NewDefaultFinder()
+	if err != nil {
+		slog.Error("failed to initialize timezone finder", "err", err)
+	}
+}
 
 // LookupIPData looks up IP data in the databases with caching.
 func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
@@ -35,7 +46,6 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 		Location struct {
 			Latitude  float64 `maxminddb:"latitude"`
 			Longitude float64 `maxminddb:"longitude"`
-			Timezone  string  `maxminddb:"time_zone"`
 		} `maxminddb:"location"`
 	}
 
@@ -61,6 +71,11 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 		region = ToPtr(cityRecord.Subdivisions[0].Names["en"])
 	}
 
+	var timezone string
+	if tzFinder != nil && (cityRecord.Location.Latitude != 0 || cityRecord.Location.Longitude != 0) {
+		timezone = tzFinder.GetTimezoneName(cityRecord.Location.Longitude, cityRecord.Location.Latitude)
+	}
+
 	data := &DataStruct{
 		IP:       ToPtr(ipStr),
 		Hostname: ToPtr(hostnameStr),
@@ -68,7 +83,7 @@ func LookupIPData(geoIP *db.GeoIPManager, ip net.IP) *DataStruct {
 		City:     ToPtr(cityRecord.City.Names["en"]),
 		Region:   region,
 		Country:  ToPtr(cityRecord.Country.IsoCode),
-		Timezone: ToPtr(cityRecord.Location.Timezone),
+		Timezone: ToPtr(timezone),
 		Loc:      ToPtr(fmt.Sprintf("%.4f,%.4f", cityRecord.Location.Latitude, cityRecord.Location.Longitude)),
 	}
 
