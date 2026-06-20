@@ -21,7 +21,7 @@ require (
 	github.com/tidwall/geojson v1.4.5 // indirect
 	github.com/tidwall/rtree v1.10.0 // indirect
 	github.com/twpayne/go-polyline v1.1.1 // indirect
-	go.mongodb.org/mongo-driver v1.11.4 // indirect
+	go.mongodb.org/mongo-driver v1.17.7 // indirect
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
