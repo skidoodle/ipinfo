@@ -32,8 +32,8 @@ type ASNPrefixInfo struct {
 
 // DomainDataResponse represents the structure of the domain data returned by the API.
 type DomainDataResponse struct {
-	Whois interface{} `json:"whois"`
-	DNS   DNSData     `json:"dns"`
+	Whois any     `json:"whois"`
+	DNS   DNSData `json:"dns"`
 }
 
 // DNSData represents the structure of the DNS records.
