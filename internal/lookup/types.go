@@ -1,7 +1,7 @@
-package common
+package lookup
 
-// DataStruct represents the structure of the IP data returned by the API.
-type DataStruct struct {
+// IPData represents the structure of the IP data returned by the API.
+type IPData struct {
 	IP       *string `json:"ip"`
 	Hostname *string `json:"hostname"`
 	Org      *string `json:"org"`
@@ -12,10 +12,10 @@ type DataStruct struct {
 	Loc      *string `json:"loc"`
 }
 
-// ASNDataResponse represents the structure of the ASN data returned by the API.
-type ASNDataResponse struct {
-	Details  ASNDetails    `json:"details"`
-	Prefixes ASNPrefixInfo `json:"prefixes"`
+// ASNData represents the structure of the ASN data returned by the API.
+type ASNData struct {
+	Details  ASNDetails `json:"details"`
+	Prefixes PrefixInfo `json:"prefixes"`
 }
 
 // ASNDetails represents the structure of the ASN details returned by the API.
@@ -24,19 +24,19 @@ type ASNDetails struct {
 	Name string `json:"name"`
 }
 
-// ASNPrefixInfo represents the structure of the ASN prefix information returned by the API.
-type ASNPrefixInfo struct {
+// PrefixInfo represents the IPv4 and IPv6 prefixes associated with an ASN.
+type PrefixInfo struct {
 	IPv4 []string `json:"ipv4"`
 	IPv6 []string `json:"ipv6"`
 }
 
-// DomainDataResponse represents the structure of the domain data returned by the API.
-type DomainDataResponse struct {
-	Whois any     `json:"whois"`
-	DNS   DNSData `json:"dns"`
+// DomainData represents the WHOIS and DNS data for a domain.
+type DomainData struct {
+	Whois *WhoisInfo `json:"whois"`
+	DNS   DNSData    `json:"dns"`
 }
 
-// DNSData represents the structure of the DNS records.
+// DNSData represents the common DNS records resolved for a domain.
 type DNSData struct {
 	A     []string `json:"A,omitempty"`
 	AAAA  []string `json:"AAAA,omitempty"`
@@ -48,7 +48,7 @@ type DNSData struct {
 	CAA   []string `json:"CAA,omitempty"`
 }
 
-// WhoisInfo is a sanitized version of the parsed whois data for the API response.
+// WhoisInfo represents formatted WHOIS information.
 type WhoisInfo struct {
 	Domain     *WhoisDomain    `json:"domain,omitempty"`
 	Registrar  *WhoisRegistrar `json:"registrar,omitempty"`
@@ -57,7 +57,7 @@ type WhoisInfo struct {
 	Tech       *WhoisContact   `json:"tech,omitempty"`
 }
 
-// WhoisDomain omits unnecessary fields from the original parsed domain struct.
+// WhoisDomain represents domain-level WHOIS information.
 type WhoisDomain struct {
 	ID             string   `json:"id,omitempty"`
 	Domain         string   `json:"domain,omitempty"`
@@ -70,7 +70,7 @@ type WhoisDomain struct {
 	ExpirationDate string   `json:"expiration_date,omitempty"`
 }
 
-// WhoisRegistrar contains registrar information.
+// WhoisRegistrar contains registrar contact information.
 type WhoisRegistrar struct {
 	ID          string `json:"id,omitempty"`
 	Name        string `json:"name,omitempty"`
@@ -79,7 +79,7 @@ type WhoisRegistrar struct {
 	ReferralURL string `json:"referral_url,omitempty"`
 }
 
-// WhoisContact contains contact information for registrant, admin, or tech.
+// WhoisContact contains individual contact details.
 type WhoisContact struct {
 	ID           string `json:"id,omitempty"`
 	Name         string `json:"name,omitempty"`
@@ -92,4 +92,18 @@ type WhoisContact struct {
 	Phone        string `json:"phone,omitempty"`
 	Fax          string `json:"fax,omitempty"`
 	Email        string `json:"email,omitempty"`
+}
+
+// BogonData represents the response returned when querying a bogon IP.
+type BogonData struct {
+	IP    string `json:"ip"`
+	Bogon bool   `json:"bogon"`
+}
+
+// StringPtr returns a pointer to the given string, or nil if the string is empty.
+func StringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

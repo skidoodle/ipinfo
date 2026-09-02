@@ -1,39 +1,30 @@
 package server
 
 import (
-	"net"
 	"net/http"
 	"strings"
 
-	"ipinfo/internal/db"
-	"ipinfo/utils"
+	"ipinfo/internal/lookup"
 )
 
-// newRouter creates the main request router and applies middleware.
-func newRouter(geoIP *db.GeoIPManager) http.Handler {
+// newRouter builds the HTTP multiplexer with middleware applied.
+func newRouter(svc *lookup.Service) http.Handler {
 	mux := http.NewServeMux()
 
-	// Register handlers
-	mux.Handle("/health", utils.HealthCheck())
+	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/favicon.ico", faviconHandler)
-	mux.HandleFunc("/", rootHandler(geoIP))
+	mux.HandleFunc("/", rootHandler(svc))
 
-	// Chain middleware
 	var handler http.Handler = mux
+	handler = gzipMiddleware(handler)
 	handler = loggingMiddleware(handler)
+	handler = recoverMiddleware(handler)
 
 	return handler
 }
 
-// rootHandler is the main routing logic that inspects the path.
-func rootHandler(geoIP *db.GeoIPManager) http.HandlerFunc {
+func rootHandler(svc *lookup.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Apply gzip compression where accepted
-		w = newGzipResponseWriter(w, r)
-		if gw, ok := w.(gzipResponseWriter); ok {
-			defer gw.Close()
-		}
-
 		path := strings.Trim(r.URL.Path, "/")
 		parts := strings.Split(path, "/")
 		firstPart := ""
@@ -41,24 +32,39 @@ func rootHandler(geoIP *db.GeoIPManager) http.HandlerFunc {
 			firstPart = parts[0]
 		}
 
-		// Route to ASN handler
-		if strings.HasPrefix(strings.ToLower(firstPart), "as") {
-			handleASNLookup(w, r, path, geoIP)
-			return
-		}
+		kind := classifyTarget(firstPart)
 
-		// Route to Domain handler
-		isDomain := strings.Contains(firstPart, ".") && net.ParseIP(firstPart) == nil && firstPart != ""
-		if isDomain {
+		switch kind {
+		case KindSelf:
+			handleIPLookup(w, r, svc, "")
+
+		case KindSelfField:
+			handleIPLookup(w, r, svc, firstPart)
+
+		case KindIP:
+			handleIPLookup(w, r, svc, path)
+
+		case KindMalformedIP:
+			sendJSONError(w, http.StatusBadRequest, "Please provide a valid IP address.")
+
+		case KindASN:
+			handleASNLookup(w, r, svc, firstPart)
+
+		case KindMalformedASN:
+			sendJSONError(w, http.StatusBadRequest, "Invalid ASN: must be a positive number.")
+
+		case KindDomain:
 			if len(parts) > 1 {
-				sendJSONError(w, "Invalid request for domain. Field lookups are not supported.", http.StatusBadRequest)
+				sendJSONError(w, http.StatusBadRequest, "Invalid request for domain. Field lookups are not supported.")
 				return
 			}
-			handleDomainLookup(w, r, firstPart)
-			return
-		}
+			handleDomainLookup(w, r, svc, firstPart)
 
-		// Default to IP handler
-		handleIPLookup(w, r, path, geoIP)
+		case KindMalformedDomain:
+			sendJSONError(w, http.StatusBadRequest, "Please provide a valid domain name.")
+
+		case KindUnknown:
+			sendJSONError(w, http.StatusBadRequest, "Please provide a valid IP address or domain name.")
+		}
 	}
 }

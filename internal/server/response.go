@@ -6,10 +6,11 @@ import (
 	"net/http"
 )
 
-// sendJSONResponse sends a JSON response with the given data and status code.
-func sendJSONResponse(w http.ResponseWriter, data any, statusCode int) {
+// sendJSONResponse encodes and writes an indented JSON response with the given status code.
+func sendJSONResponse(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusCode)
+
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(data); err != nil {
@@ -17,7 +18,9 @@ func sendJSONResponse(w http.ResponseWriter, data any, statusCode int) {
 	}
 }
 
-// sendJSONError sends a JSON error response with the given message and status code.
-func sendJSONError(w http.ResponseWriter, errMsg string, statusCode int) {
-	sendJSONResponse(w, map[string]string{"error": errMsg}, statusCode)
+// sendJSONError writes a JSON error response with the standard { "error": "message" } format.
+func sendJSONError(w http.ResponseWriter, statusCode int, message string) {
+	sendJSONResponse(w, statusCode, map[string]string{
+		"error": message,
+	})
 }

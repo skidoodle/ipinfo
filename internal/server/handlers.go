@@ -1,85 +1,102 @@
 package server
 
 import (
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"ipinfo/internal/common"
-	"ipinfo/internal/db"
+	"ipinfo/internal/bogon"
+	"ipinfo/internal/geoip"
+	"ipinfo/internal/lookup"
 
 	"golang.org/x/net/idna"
 )
 
-const favicon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"></svg>`
+const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"></svg>`
 
-// faviconHandler handles requests for the favicon.
+// healthHandler returns a 200 OK health check response.
+func healthHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("OK"))
+}
+
+// faviconHandler returns an empty SVG favicon.
 func faviconHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(favicon))
+	_, _ = w.Write([]byte(faviconSVG))
 }
 
-// handleDomainLookup handles domain lookup requests.
-func handleDomainLookup(w http.ResponseWriter, _ *http.Request, domain string) {
-	punycodeDomain, err := idna.ToASCII(domain)
+func handleDomainLookup(w http.ResponseWriter, r *http.Request, svc *lookup.Service, domain string) {
+	cleanDomain := strings.TrimSuffix(strings.TrimSpace(domain), ".")
+	punycodeDomain, err := idna.ToASCII(cleanDomain)
+	if err != nil || len(punycodeDomain) > 253 {
+		sendJSONError(w, http.StatusBadRequest, "Please provide a valid domain name.")
+		return
+	}
+
+	data, err := svc.LookupDomain(r.Context(), punycodeDomain)
 	if err != nil {
-		sendJSONError(w, "Please provide a valid domain name.", http.StatusBadRequest)
+		slog.Error("failed domain lookup", "domain", punycodeDomain, "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "Error retrieving data for domain.")
 		return
 	}
 
-	if len(punycodeDomain) > 253 {
-		sendJSONError(w, "Please provide a valid domain name.", http.StatusBadRequest)
+	// If domain returned neither WHOIS nor any DNS records, it cannot be resolved
+	if data.Whois == nil && isDNSEmpty(data.DNS) {
+		sendJSONError(w, http.StatusNotFound, "Could not retrieve data for the specified domain.")
 		return
 	}
 
-	data, err := common.LookupDomainData(punycodeDomain)
-	if err != nil {
-		slog.Error("failed to look up domain data", "domain", punycodeDomain, "error", err)
-		sendJSONError(w, "Error retrieving data for domain.", http.StatusInternalServerError)
-		return
-	}
-
-	sendJSONResponse(w, data, http.StatusOK)
+	sendJSONResponse(w, http.StatusOK, data)
 }
 
-// handleASNLookup handles ASN lookup requests.
-func handleASNLookup(w http.ResponseWriter, _ *http.Request, path string, geoIP *db.GeoIPManager) {
-	upperPath := strings.ToUpper(path)
-	cleanPath := path
+func isDNSEmpty(d lookup.DNSData) bool {
+	return len(d.A) == 0 &&
+		len(d.AAAA) == 0 &&
+		d.CNAME == "" &&
+		len(d.MX) == 0 &&
+		len(d.TXT) == 0 &&
+		len(d.NS) == 0 &&
+		len(d.SOA) == 0 &&
+		len(d.CAA) == 0
+}
 
-	if strings.HasPrefix(upperPath, "ASN") {
-		cleanPath = path[3:]
-	} else if strings.HasPrefix(upperPath, "AS") {
-		cleanPath = path[2:]
+func handleASNLookup(w http.ResponseWriter, r *http.Request, svc *lookup.Service, target string) {
+	upper := strings.ToUpper(strings.TrimSpace(target))
+	clean := upper
+	if strings.HasPrefix(upper, "ASN") {
+		clean = upper[3:]
+	} else if strings.HasPrefix(upper, "AS") {
+		clean = upper[2:]
 	}
 
-	asnStr := strings.Trim(cleanPath, "/ ")
-
+	asnStr := strings.Trim(clean, "/ ")
 	asn, err := strconv.ParseUint(asnStr, 10, 32)
 	if err != nil || asn == 0 {
-		sendJSONError(w, "Invalid ASN: must be a positive number.", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid ASN: must be a positive number.")
 		return
 	}
 
-	data, err := common.LookupASNData(geoIP, uint(asn))
+	data, err := svc.LookupASN(r.Context(), uint(asn))
 	if err != nil {
-		if strings.Contains(err.Error(), "no prefixes found") {
-			sendJSONError(w, err.Error(), http.StatusNotFound)
-		} else {
-			slog.Error("failed to look up asn data", "asn", asn, "error", err)
-			sendJSONError(w, "Error retrieving data for ASN.", http.StatusInternalServerError)
+		if errors.Is(err, geoip.ErrASNNotFound) {
+			sendJSONError(w, http.StatusNotFound, "no prefixes found for as"+asnStr+" in the database")
+			return
 		}
+		slog.Error("failed asn lookup", "asn", asn, "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "Error retrieving data for ASN.")
 		return
 	}
 
-	sendJSONResponse(w, data, http.StatusOK)
+	sendJSONResponse(w, http.StatusOK, data)
 }
 
-// handleIPLookup handles IP lookup requests.
-func handleIPLookup(w http.ResponseWriter, r *http.Request, path string, geoIP *db.GeoIPManager) {
+func handleIPLookup(w http.ResponseWriter, r *http.Request, svc *lookup.Service, path string) {
 	parts := strings.Split(path, "/")
 	var ipAddress, field string
 
@@ -99,39 +116,48 @@ func handleIPLookup(w http.ResponseWriter, r *http.Request, path string, geoIP *
 		ipAddress = parts[0]
 		field = parts[1]
 	default:
-		sendJSONError(w, "Invalid request format.", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid request format.")
 		return
 	}
 
-	ip := net.ParseIP(ipAddress)
+	cleanIP := strings.TrimSpace(ipAddress)
+	if strings.HasPrefix(cleanIP, "[") && strings.HasSuffix(cleanIP, "]") {
+		cleanIP = cleanIP[1 : len(cleanIP)-1]
+	}
+
+	ip := net.ParseIP(cleanIP)
 	if ip == nil {
-		sendJSONError(w, "Please provide a valid IP address.", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Please provide a valid IP address.")
 		return
 	}
 
 	if field != "" {
 		if _, ok := fieldMap[field]; !ok {
-			sendJSONError(w, "Please provide a valid field.", http.StatusBadRequest)
+			sendJSONError(w, http.StatusBadRequest, "Please provide a valid field.")
 			return
 		}
 	}
 
-	if common.IsBogon(ip) {
-		sendJSONResponse(w, bogonDataStruct{IP: ip.String(), Bogon: true}, http.StatusOK)
+	if bogon.IsBogonIP(ip) {
+		sendJSONResponse(w, http.StatusOK, lookup.BogonData{
+			IP:    ip.String(),
+			Bogon: true,
+		})
 		return
 	}
 
-	data := common.LookupIPData(geoIP, ip)
-	if data == nil {
-		sendJSONError(w, "Could not retrieve data for the specified IP.", http.StatusNotFound)
+	data, err := svc.LookupIP(r.Context(), ip)
+	if err != nil {
+		slog.Error("could not retrieve data for ip", "ip", ipAddress, "error", err)
+		sendJSONError(w, http.StatusNotFound, "Could not retrieve data for the specified IP.")
 		return
 	}
 
 	if field != "" {
-		value := getField(data, field)
-		sendJSONResponse(w, map[string]*string{field: value}, http.StatusOK)
+		val := getField(data, field)
+		sendJSONResponse(w, http.StatusOK, map[string]*string{field: val})
 		return
 	}
 
-	sendJSONResponse(w, data, http.StatusOK)
+	sendJSONResponse(w, http.StatusOK, data)
 }

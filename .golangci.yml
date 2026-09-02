@@ -1,0 +1,48 @@
+version: "2"
+run:
+  go: 1.27.0
+  timeout: 5m
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 50
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - errcheck
+    - errorlint
+    - nilerr
+    - forcetypeassert
+    - copyloopvar
+    - durationcheck
+    - gocritic
+    - revive
+    - misspell
+    - predeclared
+    - asciicheck
+    - unconvert
+    - gosec
+    - bodyclose
+    - noctx
+    - containedctx
+    - sloglint
+    - nolintlint
+  exclusions:
+    paths:
+      - vendor$
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    gosec:
+      excludes:
+        - G104 # unchecked errors, handled by errcheck
+    sloglint:
+      no-mixed-args: true
+      kv-only: false
+      attr-only: false

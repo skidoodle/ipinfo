@@ -3,56 +3,61 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
-	"ipinfo/internal/db"
+	"ipinfo/internal/config"
+	"ipinfo/internal/lookup"
 )
 
-// Server represents the HTTP server.
+// Server encapsulates the HTTP server instance.
 type Server struct {
-	server *http.Server
+	httpServer *http.Server
 }
 
-// NewServer creates a new HTTP server.
-func NewServer(geoIP *db.GeoIPManager) *Server {
-	// The router is now created in its own file.
-	handler := newRouter(geoIP)
+// NewServer creates and configures the HTTP server.
+func NewServer(cfg config.Config, svc *lookup.Service) *Server {
+	router := newRouter(svc)
 
 	return &Server{
-		server: &http.Server{
-			Addr:         ":3000",
-			Handler:      handler,
+		httpServer: &http.Server{
+			Addr:         cfg.Addr,
+			Handler:      router,
 			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
+			WriteTimeout: 15 * time.Second,
 			IdleTimeout:  60 * time.Second,
 		},
 	}
 }
 
-// Start starts the HTTP server and handles graceful shutdown.
+// Start runs the HTTP server and coordinates graceful shutdown when ctx is canceled.
 func (s *Server) Start(ctx context.Context) error {
+	errCh := make(chan error, 1)
+
 	go func() {
-		slog.Info("server listening", "address", s.server.Addr)
-		if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("server error", "error", err)
-			os.Exit(1)
+		slog.Info("server listening", "address", s.httpServer.Addr)
+		if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
 		}
+		close(errCh)
 	}()
 
-	<-ctx.Done()
+	select {
+	case err := <-errCh:
+		return fmt.Errorf("http server failed: %w", err)
+	case <-ctx.Done():
+		slog.Info("shutdown signal received")
+	}
 
-	slog.Info("shutdown signal received")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := s.server.Shutdown(shutdownCtx); err != nil {
-		slog.Error("shutdown failed", "error", err)
-		return err
+	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("server graceful shutdown failed: %w", err)
 	}
 
-	slog.Info("shutdown complete")
+	slog.Info("server shut down gracefully")
 	return nil
 }
